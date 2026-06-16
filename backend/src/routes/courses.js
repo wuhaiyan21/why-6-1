@@ -1,0 +1,210 @@
+const express = require('express');
+const db = require('../db');
+const { authenticateToken, requireAdmin } = require('../middleware/auth');
+
+const router = express.Router();
+
+router.get('/', async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        c.*,
+        (c.capacity - c.enrolled_count) as remaining_slots
+      FROM courses c
+      WHERE c.is_active = true
+      ORDER BY c.start_date ASC
+    `);
+
+    const courses = result.rows.map(course => ({
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      capacity: course.capacity,
+      enrolledCount: course.enrolled_count,
+      remainingSlots: course.remaining_slots,
+      startDate: course.start_date,
+      isActive: course.is_active,
+      createdAt: course.created_at,
+    }));
+
+    res.json(courses);
+  } catch (error) {
+    console.error('Get courses error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const courseResult = await db.query(`
+      SELECT 
+        c.*,
+        (c.capacity - c.enrolled_count) as remaining_slots
+      FROM courses c
+      WHERE c.id = $1
+    `, [id]);
+
+    if (courseResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const course = courseResult.rows[0];
+
+    const prereqResult = await db.query(`
+      SELECT p.id, p.title, p.description
+      FROM prerequisites pr
+      JOIN courses p ON pr.prerequisite_id = p.id
+      WHERE pr.course_id = $1
+    `, [id]);
+
+    res.json({
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      capacity: course.capacity,
+      enrolledCount: course.enrolled_count,
+      remainingSlots: course.remaining_slots,
+      startDate: course.start_date,
+      isActive: course.is_active,
+      prerequisites: prereqResult.rows,
+      createdAt: course.created_at,
+    });
+  } catch (error) {
+    console.error('Get course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { title, description, capacity, startDate, prerequisites = [] } = req.body;
+
+    if (!title || !capacity || !startDate) {
+      return res.status(400).json({ error: 'Title, capacity, and start date are required' });
+    }
+
+    const result = await db.query(
+      `INSERT INTO courses (title, description, capacity, start_date) 
+       VALUES ($1, $2, $3, $4) 
+       RETURNING *`,
+      [title, description, capacity, startDate]
+    );
+
+    const course = result.rows[0];
+
+    for (const prereqId of prerequisites) {
+      await db.query(
+        'INSERT INTO prerequisites (course_id, prerequisite_id) VALUES ($1, $2)',
+        [course.id, prereqId]
+      );
+    }
+
+    res.status(201).json({
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      capacity: course.capacity,
+      enrolledCount: course.enrolled_count,
+      remainingSlots: course.capacity,
+      startDate: course.start_date,
+      isActive: course.is_active,
+    });
+  } catch (error) {
+    console.error('Create course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, description, capacity, startDate, isActive, prerequisites } = req.body;
+
+    const existingCourse = await db.query('SELECT * FROM courses WHERE id = $1', [id]);
+    if (existingCourse.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    const course = existingCourse.rows[0];
+
+    const result = await db.query(
+      `UPDATE courses 
+       SET title = COALESCE($1, title),
+           description = COALESCE($2, description),
+           capacity = COALESCE($3, capacity),
+           start_date = COALESCE($4, start_date),
+           is_active = COALESCE($5, is_active)
+       WHERE id = $6
+       RETURNING *`,
+      [title, description, capacity, startDate, isActive, id]
+    );
+
+    if (prerequisites) {
+      await db.query('DELETE FROM prerequisites WHERE course_id = $1', [id]);
+      for (const prereqId of prerequisites) {
+        if (prereqId != id) {
+          await db.query(
+            'INSERT INTO prerequisites (course_id, prerequisite_id) VALUES ($1, $2)',
+            [id, prereqId]
+          );
+        }
+      }
+    }
+
+    const updatedCourse = result.rows[0];
+    res.json({
+      id: updatedCourse.id,
+      title: updatedCourse.title,
+      description: updatedCourse.description,
+      capacity: updatedCourse.capacity,
+      enrolledCount: updatedCourse.enrolled_count,
+      remainingSlots: updatedCourse.capacity - updatedCourse.enrolled_count,
+      startDate: updatedCourse.start_date,
+      isActive: updatedCourse.is_active,
+    });
+  } catch (error) {
+    console.error('Update course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query('DELETE FROM courses WHERE id = $1 RETURNING id', [id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    res.json({ message: 'Course deleted successfully' });
+  } catch (error) {
+    console.error('Delete course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/close', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      'UPDATE courses SET is_active = false WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    res.json({ message: 'Course enrollment closed successfully' });
+  } catch (error) {
+    console.error('Close course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+module.exports = router;
