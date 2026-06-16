@@ -62,13 +62,17 @@ async function seed() {
 
     const courseIds = [];
     for (const course of courses) {
-      const result = await client.query(
+      const insertResult = await client.query(
         `INSERT INTO courses (title, description, capacity, start_date) 
          VALUES ($1, $2, $3, $4) 
+         ON CONFLICT (title) DO UPDATE SET
+           description = EXCLUDED.description,
+           capacity = EXCLUDED.capacity,
+           start_date = EXCLUDED.start_date
          RETURNING id`,
         [course.title, course.description, course.capacity, course.startDate]
       );
-      courseIds.push(result.rows[0].id);
+      courseIds.push(insertResult.rows[0].id);
     }
 
     const jsCourseId = courseIds[0];

@@ -1,17 +1,41 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
+const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key';
+
+function getOptionalUser(req) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') 
+    ? authHeader.split(' ')[1] 
+    : null;
+
+  if (!token) return null;
+
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
+
 router.get('/', async (req, res) => {
   try {
+    const user = getOptionalUser(req);
+    const isAdmin = user && user.isAdmin;
+    const includeInactive = isAdmin && req.query.includeInactive === 'true';
+
+    const whereClause = includeInactive ? '' : 'WHERE c.is_active = true';
+
     const result = await db.query(`
       SELECT 
         c.*,
         (c.capacity - c.enrolled_count) as remaining_slots
       FROM courses c
-      WHERE c.is_active = true
+      ${whereClause}
       ORDER BY c.start_date ASC
     `);
 
@@ -129,6 +153,15 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     const course = existingCourse.rows[0];
 
+    if (capacity !== undefined && capacity !== null) {
+      const newCapacity = parseInt(capacity, 10);
+      if (isNaN(newCapacity) || newCapacity < course.enrolled_count) {
+        return res.status(400).json({ 
+          error: `Capacity cannot be less than current enrolled count (${course.enrolled_count})` 
+        });
+      }
+    }
+
     const result = await db.query(
       `UPDATE courses 
        SET title = COALESCE($1, title),
@@ -203,6 +236,26 @@ router.post('/:id/close', authenticateToken, requireAdmin, async (req, res) => {
     res.json({ message: 'Course enrollment closed successfully' });
   } catch (error) {
     console.error('Close course error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/:id/reopen', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await db.query(
+      'UPDATE courses SET is_active = true WHERE id = $1 RETURNING *',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Course not found' });
+    }
+
+    res.json({ message: 'Course enrollment reopened successfully' });
+  } catch (error) {
+    console.error('Reopen course error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

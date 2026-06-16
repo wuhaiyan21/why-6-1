@@ -45,6 +45,8 @@ export const authAPI = {
 export const courseAPI = {
   getCourses: () => request('/courses'),
 
+  getCoursesAdmin: () => request('/courses?includeInactive=true'),
+
   getCourse: (id) => request(`/courses/${id}`),
 
   createCourse: (courseData) =>
@@ -66,6 +68,11 @@ export const courseAPI = {
 
   closeCourse: (id) =>
     request(`/courses/${id}/close`, {
+      method: 'POST',
+    }),
+
+  reopenCourse: (id) =>
+    request(`/courses/${id}/reopen`, {
       method: 'POST',
     }),
 };

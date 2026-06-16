@@ -60,6 +60,17 @@ async function migrate() {
       CREATE INDEX IF NOT EXISTS idx_enrollments_status ON enrollments(status);
     `);
 
+    await client.query(`
+      DELETE FROM courses 
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM courses GROUP BY title
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_courses_title ON courses(title)
+    `);
+
     await client.query('COMMIT');
     console.log('Migration completed successfully');
   } catch (error) {

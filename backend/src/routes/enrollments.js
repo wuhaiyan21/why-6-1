@@ -29,7 +29,7 @@ async function checkPrerequisites(userId, courseId) {
 
   const completedResult = await db.query(
     `SELECT course_id FROM enrollments 
-     WHERE user_id = $1 AND course_id = ANY($2::int[]) AND status = 'paid' AND completed = true`,
+     WHERE user_id = $1 AND course_id = ANY($2::int[]) AND status = 'paid'`,
     [userId, prereqIds]
   );
 
@@ -237,7 +237,7 @@ router.post('/enrollments/:enrollmentId/pay', authenticateToken, async (req, res
 
     await db.query(
       `UPDATE enrollments 
-       SET status = 'paid', paid_at = CURRENT_TIMESTAMP, reserved_until = NULL
+       SET status = 'paid', paid_at = CURRENT_TIMESTAMP, reserved_until = NULL, completed = true
        WHERE id = $1`,
       [enrollmentId]
     );

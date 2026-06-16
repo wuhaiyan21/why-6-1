@@ -20,6 +20,7 @@ function AdminPanel() {
   const [error, setError] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
+  const [formError, setFormError] = useState('');
   
   const [formData, setFormData] = useState({
     title: '',
@@ -42,7 +43,7 @@ function AdminPanel() {
   const loadCourses = async () => {
     try {
       setLoading(true);
-      const data = await courseAPI.getCourses();
+      const data = await courseAPI.getCoursesAdmin();
       setCourses(data);
     } catch (err) {
       setError(err.message);
@@ -53,6 +54,7 @@ function AdminPanel() {
 
   const handleCreate = () => {
     setEditingCourse(null);
+    setFormError('');
     setFormData({
       title: '',
       description: '',
@@ -66,6 +68,7 @@ function AdminPanel() {
 
   const handleEdit = (course) => {
     setEditingCourse(course);
+    setFormError('');
     setFormData({
       title: course.title,
       description: course.description || '',
@@ -79,7 +82,7 @@ function AdminPanel() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setError('');
+    setFormError('');
 
     try {
       const courseData = {
@@ -100,7 +103,7 @@ function AdminPanel() {
       setShowModal(false);
       loadCourses();
     } catch (err) {
-      setError(err.message);
+      setFormError(err.message);
     }
   };
 
@@ -109,7 +112,21 @@ function AdminPanel() {
       return;
     }
     try {
+      setError('');
       await courseAPI.closeCourse(courseId);
+      loadCourses();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleReopen = async (courseId) => {
+    if (!window.confirm('确定要重新开启该课程的报名吗？')) {
+      return;
+    }
+    try {
+      setError('');
+      await courseAPI.reopenCourse(courseId);
       loadCourses();
     } catch (err) {
       setError(err.message);
@@ -202,12 +219,19 @@ function AdminPanel() {
                     >
                       编辑
                     </button>
-                    {course.isActive && (
+                    {course.isActive ? (
                       <button
                         onClick={() => handleClose(course.id)}
                         style={{ ...styles.actionBtn, color: '#d97706' }}
                       >
                         关闭
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleReopen(course.id)}
+                        style={{ ...styles.actionBtn, color: '#16a34a' }}
+                      >
+                        开启
                       </button>
                     )}
                     <button
@@ -236,6 +260,8 @@ function AdminPanel() {
             </h2>
 
             <form onSubmit={handleSubmit} style={styles.form}>
+              {formError && <div style={styles.modalError}>{formError}</div>}
+
               <div style={styles.field}>
                 <label style={styles.label}>课程名称</label>
                 <input
@@ -258,10 +284,15 @@ function AdminPanel() {
               </div>
 
               <div style={styles.field}>
-                <label style={styles.label}>名额数量</label>
+                <label style={styles.label}>
+                  名额数量
+                  {editingCourse && (
+                    <span style={styles.hint}>（当前已报名 {editingCourse.enrolledCount} 人）</span>
+                  )}
+                </label>
                 <input
                   type="number"
-                  min="1"
+                  min={editingCourse ? editingCourse.enrolledCount : 1}
                   value={formData.capacity}
                   onChange={(e) => setFormData({ ...formData, capacity: e.target.value })}
                   style={styles.input}
@@ -353,6 +384,20 @@ const styles = {
     padding: '0.75rem 1rem',
     borderRadius: '8px',
     marginBottom: '1rem',
+  },
+  modalError: {
+    backgroundColor: '#fee2e2',
+    color: '#991b1b',
+    padding: '0.75rem 1rem',
+    borderRadius: '8px',
+    fontSize: '0.9rem',
+    marginBottom: '0.5rem',
+  },
+  hint: {
+    fontSize: '0.8rem',
+    color: '#64748b',
+    fontWeight: 'normal',
+    marginLeft: '0.5rem',
   },
   tableContainer: {
     backgroundColor: 'white',
