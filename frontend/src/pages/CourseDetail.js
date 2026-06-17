@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { courseAPI, enrollmentAPI } from '../services/api';
+import { courseAPI, enrollmentAPI, notificationAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 function formatDate(dateString) {
@@ -23,8 +23,30 @@ function CourseDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [enrolling, setEnrolling] = useState(false);
+  const [waitlisting, setWaitlisting] = useState(false);
   const [prereqCheck, setPrereqCheck] = useState(null);
   const [message, setMessage] = useState('');
+  const [waitlistStatus, setWaitlistStatus] = useState(null);
+
+  const loadWaitlistStatus = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const data = await enrollmentAPI.getWaitlistStatus(id);
+      setWaitlistStatus(data);
+    } catch (err) {
+      console.error('Failed to get waitlist status:', err);
+    }
+  }, [id, isAuthenticated]);
+
+  const checkPrerequisites = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const data = await enrollmentAPI.checkPrerequisites(id);
+      setPrereqCheck(data);
+    } catch (err) {
+      console.error('Failed to check prerequisites:', err);
+    }
+  }, [id, isAuthenticated]);
 
   useEffect(() => {
     loadCourse();
@@ -33,8 +55,9 @@ function CourseDetail() {
   useEffect(() => {
     if (isAuthenticated && course) {
       checkPrerequisites();
+      loadWaitlistStatus();
     }
-  }, [isAuthenticated, course]);
+  }, [isAuthenticated, course, checkPrerequisites, loadWaitlistStatus]);
 
   const loadCourse = async () => {
     try {
@@ -48,12 +71,39 @@ function CourseDetail() {
     }
   };
 
-  const checkPrerequisites = async () => {
+  const handleJoinWaitlist = async () => {
+    if (!isAuthenticated) {
+      navigate('/login', { state: { from: `/courses/${id}` } });
+      return;
+    }
+
     try {
-      const data = await enrollmentAPI.checkPrerequisites(id);
-      setPrereqCheck(data);
+      setWaitlisting(true);
+      setError('');
+      await enrollmentAPI.joinWaitlist(id);
+      setMessage('成功加入候补队列！');
+      loadWaitlistStatus();
     } catch (err) {
-      console.error('Failed to check prerequisites:', err);
+      setError(err.message);
+    } finally {
+      setWaitlisting(false);
+    }
+  };
+
+  const handleCancelWaitlist = async () => {
+    if (!window.confirm('确定要取消候补吗？')) {
+      return;
+    }
+    try {
+      setWaitlisting(true);
+      setError('');
+      await enrollmentAPI.cancelWaitlist(id);
+      setMessage('已取消候补');
+      loadWaitlistStatus();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWaitlisting(false);
     }
   };
 
@@ -179,25 +229,72 @@ function CourseDetail() {
               <div style={styles.errorMessage}>{error}</div>
             )}
 
-            <button
-              onClick={handleEnroll}
-              disabled={enrolling || course.remainingSlots <= 0 || (prereqCheck && !prereqCheck.met)}
-              style={{
-                ...styles.enrollBtn,
-                opacity: (enrolling || course.remainingSlots <= 0 || (prereqCheck && !prereqCheck.met)) ? 0.5 : 1,
-                cursor: (enrolling || course.remainingSlots <= 0 || (prereqCheck && !prereqCheck.met)) ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {enrolling ? '报名中...' : '立即报名'}
-            </button>
+            {course.remainingSlots > 0 ? (
+              <button
+                onClick={handleEnroll}
+                disabled={enrolling || (prereqCheck && !prereqCheck.met)}
+                style={{
+                  ...styles.enrollBtn,
+                  opacity: (enrolling || (prereqCheck && !prereqCheck.met)) ? 0.5 : 1,
+                  cursor: (enrolling || (prereqCheck && !prereqCheck.met)) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {enrolling ? '报名中...' : '立即报名'}
+              </button>
+            ) : (
+              <>
+                {waitlistStatus && waitlistStatus.onWaitlist ? (
+                  <>
+                    <div style={styles.waitlistInfo}>
+                      <p style={styles.waitlistText}>
+                        📋 您已加入候补队列
+                      </p>
+                      <p style={styles.waitlistPosition}>
+                        当前排名：第 <strong>{waitlistStatus.position}</strong> 位
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleCancelWaitlist}
+                      disabled={waitlisting}
+                      style={{
+                        ...styles.waitlistCancelBtn,
+                        opacity: waitlisting ? 0.5 : 1,
+                        cursor: waitlisting ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {waitlisting ? '处理中...' : '取消候补'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={handleJoinWaitlist}
+                    disabled={waitlisting || (prereqCheck && !prereqCheck.met)}
+                    style={{
+                      ...styles.waitlistBtn,
+                      opacity: (waitlisting || (prereqCheck && !prereqCheck.met)) ? 0.5 : 1,
+                      cursor: (waitlisting || (prereqCheck && !prereqCheck.met)) ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {waitlisting ? '加入中...' : '加入候补'}
+                  </button>
+                )}
+              </>
+            )}
 
             {!isAuthenticated && (
               <p style={styles.loginHint}>请先登录后再报名</p>
             )}
 
-            <p style={styles.note}>
-              💡 报名后系统会为您保留15分钟名额，请尽快完成支付
-            </p>
+            {course.remainingSlots > 0 && (
+              <p style={styles.note}>
+                💡 报名后系统会为您保留15分钟名额，请尽快完成支付
+              </p>
+            )}
+            {course.remainingSlots <= 0 && (
+              <p style={styles.note}>
+                💡 加入候补后，如有名额释放将按顺序自动转为待支付，保留15分钟
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -354,6 +451,49 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
     marginTop: '1rem',
+  },
+  waitlistBtn: {
+    width: '100%',
+    backgroundColor: '#f59e0b',
+    color: 'white',
+    border: 'none',
+    padding: '0.875rem',
+    borderRadius: '8px',
+    fontSize: '1rem',
+    fontWeight: '600',
+    cursor: 'pointer',
+    marginTop: '1rem',
+  },
+  waitlistCancelBtn: {
+    width: '100%',
+    backgroundColor: 'white',
+    color: '#dc2626',
+    border: '1px solid #fecaca',
+    padding: '0.75rem',
+    borderRadius: '8px',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+    marginTop: '0.5rem',
+  },
+  waitlistInfo: {
+    backgroundColor: '#fffbeb',
+    border: '1px solid #fde68a',
+    borderRadius: '8px',
+    padding: '1rem',
+    marginTop: '1rem',
+    textAlign: 'center',
+  },
+  waitlistText: {
+    color: '#92400e',
+    fontWeight: '600',
+    margin: '0 0 0.5rem 0',
+    fontSize: '0.95rem',
+  },
+  waitlistPosition: {
+    color: '#78350f',
+    margin: 0,
+    fontSize: '0.9rem',
   },
   loginHint: {
     textAlign: 'center',

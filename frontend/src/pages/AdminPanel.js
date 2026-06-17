@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { courseAPI } from '../services/api';
+import { courseAPI, adminAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 
 function formatDate(dateString) {
@@ -31,6 +31,21 @@ function AdminPanel() {
     prerequisites: [],
   });
 
+  const [activeTab, setActiveTab] = useState('courses');
+  
+  const [enrollments, setEnrollments] = useState([]);
+  const [enrollmentsLoading, setEnrollmentsLoading] = useState(false);
+  const [enrollmentFilter, setEnrollmentFilter] = useState({
+    courseId: '',
+    status: '',
+    page: 1,
+    limit: 20,
+  });
+  const [enrollmentPagination, setEnrollmentPagination] = useState({
+    total: 0,
+    totalPages: 0,
+  });
+
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
@@ -39,6 +54,12 @@ function AdminPanel() {
       loadCourses();
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'enrollments') {
+      loadEnrollments();
+    }
+  }, [isAdmin, activeTab, enrollmentFilter]);
 
   const loadCourses = async () => {
     try {
@@ -50,6 +71,69 @@ function AdminPanel() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadEnrollments = async () => {
+    try {
+      setEnrollmentsLoading(true);
+      const params = {};
+      if (enrollmentFilter.courseId) params.courseId = enrollmentFilter.courseId;
+      if (enrollmentFilter.status) params.status = enrollmentFilter.status;
+      params.page = enrollmentFilter.page;
+      params.limit = enrollmentFilter.limit;
+
+      const data = await adminAPI.getEnrollments(params);
+      setEnrollments(data.enrollments);
+      setEnrollmentPagination({
+        total: data.total,
+        totalPages: data.totalPages,
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setEnrollmentsLoading(false);
+    }
+  };
+
+  const handleExportCSV = async () => {
+    try {
+      const params = {};
+      if (enrollmentFilter.courseId) params.courseId = enrollmentFilter.courseId;
+      if (enrollmentFilter.status) params.status = enrollmentFilter.status;
+
+      const blob = await adminAPI.exportEnrollments(params);
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'enrollments.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('导出失败：' + err.message);
+    }
+  };
+
+  const getStatusBadge = (status) => {
+    const stylesMap = {
+      pending: { bg: '#fef3c7', color: '#92400e', text: '待支付' },
+      paid: { bg: '#dcfce7', color: '#166534', text: '已支付' },
+      cancelled: { bg: '#fee2e2', color: '#991b1b', text: '已取消' },
+    };
+    const style = stylesMap[status] || stylesMap.pending;
+    return (
+      <span style={{
+        backgroundColor: style.bg,
+        color: style.color,
+        padding: '0.25rem 0.75rem',
+        borderRadius: '20px',
+        fontSize: '0.8rem',
+        fontWeight: '500',
+      }}>
+        {style.text}
+      </span>
+    );
   };
 
   const handleCreate = () => {
@@ -108,7 +192,7 @@ function AdminPanel() {
   };
 
   const handleClose = async (courseId) => {
-    if (!window.confirm('确定要关闭该课程的报名吗？')) {
+    if (!window.confirm('确定要关闭该课程的报名吗？关闭后将无法新增报名和候补。')) {
       return;
     }
     try {
@@ -166,91 +250,225 @@ function AdminPanel() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h1 style={styles.title}>课程管理</h1>
-        <button onClick={handleCreate} style={styles.createBtn}>
-          + 新建课程
+        <h1 style={styles.title}>管理后台</h1>
+      </div>
+
+      <div style={styles.tabs}>
+        <button 
+          onClick={() => setActiveTab('courses')}
+          style={{
+            ...styles.tab,
+            ...(activeTab === 'courses' ? styles.tabActive : {}),
+          }}
+        >
+          课程管理
+        </button>
+        <button 
+          onClick={() => setActiveTab('enrollments')}
+          style={{
+            ...styles.tab,
+            ...(activeTab === 'enrollments' ? styles.tabActive : {}),
+          }}
+        >
+          报名明细
         </button>
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
 
-      <div style={styles.tableContainer}>
-        <table style={styles.table}>
-          <thead>
-            <tr style={styles.tableHeader}>
-              <th style={styles.th}>课程名称</th>
-              <th style={styles.th}>总名额</th>
-              <th style={styles.th}>已报名</th>
-              <th style={styles.th}>剩余名额</th>
-              <th style={styles.th}>开课时间</th>
-              <th style={styles.th}>状态</th>
-              <th style={styles.th}>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {courses.map(course => (
-              <tr key={course.id} style={styles.tableRow}>
-                <td style={styles.td}>
-                  <span style={styles.courseName}>{course.title}</span>
-                </td>
-                <td style={styles.td}>{course.capacity}</td>
-                <td style={styles.td}>{course.enrolledCount}</td>
-                <td style={styles.td}>
-                  <span style={{
-                    color: course.remainingSlots > 0 ? '#16a34a' : '#dc2626',
-                    fontWeight: '500',
-                  }}>
-                    {course.remainingSlots}
-                  </span>
-                </td>
-                <td style={styles.td}>{formatDate(course.startDate)}</td>
-                <td style={styles.td}>
-                  {course.isActive ? (
-                    <span style={styles.statusActive}>招生中</span>
-                  ) : (
-                    <span style={styles.statusClosed}>已关闭</span>
-                  )}
-                </td>
-                <td style={styles.td}>
-                  <div style={styles.actions}>
+      {activeTab === 'courses' && (
+        <>
+          <div style={styles.subHeader}>
+            <h2 style={styles.subTitle}>课程列表</h2>
+            <button onClick={handleCreate} style={styles.createBtn}>
+              + 新建课程
+            </button>
+          </div>
+
+          <div style={styles.tableContainer}>
+            <table style={styles.table}>
+              <thead>
+                <tr style={styles.tableHeader}>
+                  <th style={styles.th}>课程名称</th>
+                  <th style={styles.th}>总名额</th>
+                  <th style={styles.th}>已报名</th>
+                  <th style={styles.th}>剩余名额</th>
+                  <th style={styles.th}>开课时间</th>
+                  <th style={styles.th}>状态</th>
+                  <th style={styles.th}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {courses.map(course => (
+                  <tr key={course.id} style={styles.tableRow}>
+                    <td style={styles.td}>
+                      <span style={styles.courseName}>{course.title}</span>
+                    </td>
+                    <td style={styles.td}>{course.capacity}</td>
+                    <td style={styles.td}>{course.enrolledCount}</td>
+                    <td style={styles.td}>
+                      <span style={{
+                        color: course.remainingSlots > 0 ? '#16a34a' : '#dc2626',
+                        fontWeight: '500',
+                      }}>
+                        {course.remainingSlots}
+                      </span>
+                    </td>
+                    <td style={styles.td}>{formatDate(course.startDate)}</td>
+                    <td style={styles.td}>
+                      {course.isActive ? (
+                        <span style={styles.statusActive}>招生中</span>
+                      ) : (
+                        <span style={styles.statusClosed}>已关闭</span>
+                      )}
+                    </td>
+                    <td style={styles.td}>
+                      <div style={styles.actions}>
+                        <button
+                          onClick={() => handleEdit(course)}
+                          style={styles.actionBtn}
+                        >
+                          编辑
+                        </button>
+                        {course.isActive ? (
+                          <button
+                            onClick={() => handleClose(course.id)}
+                            style={{ ...styles.actionBtn, color: '#d97706' }}
+                          >
+                            关闭
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleReopen(course.id)}
+                            style={{ ...styles.actionBtn, color: '#16a34a' }}
+                          >
+                            开启
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(course.id)}
+                          style={{ ...styles.actionBtn, color: '#dc2626' }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {courses.length === 0 && (
+              <div style={styles.empty}>暂无课程</div>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'enrollments' && (
+        <>
+          <div style={styles.subHeader}>
+            <h2 style={styles.subTitle}>报名明细</h2>
+            <button onClick={handleExportCSV} style={styles.exportBtn}>
+              📥 导出CSV
+            </button>
+          </div>
+
+          <div style={styles.filterBar}>
+            <div style={styles.filterItem}>
+              <label style={styles.filterLabel}>筛选课程</label>
+              <select
+                value={enrollmentFilter.courseId}
+                onChange={(e) => setEnrollmentFilter({ ...enrollmentFilter, courseId: e.target.value, page: 1 })}
+                style={styles.filterSelect}
+              >
+                <option value="">全部课程</option>
+                {courses.map(course => (
+                  <option key={course.id} value={course.id}>
+                    {course.title} {course.isActive ? '' : '(已关闭)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={styles.filterItem}>
+              <label style={styles.filterLabel}>筛选状态</label>
+              <select
+                value={enrollmentFilter.status}
+                onChange={(e) => setEnrollmentFilter({ ...enrollmentFilter, status: e.target.value, page: 1 })}
+                style={styles.filterSelect}
+              >
+                <option value="">全部状态</option>
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="cancelled">已取消</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={styles.tableContainer}>
+            {enrollmentsLoading ? (
+              <div style={styles.loading}>加载中...</div>
+            ) : (
+              <>
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeader}>
+                      <th style={styles.th}>用户名</th>
+                      <th style={styles.th}>课程名称</th>
+                      <th style={styles.th}>状态</th>
+                      <th style={styles.th}>报名时间</th>
+                      <th style={styles.th}>支付时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enrollments.map(enrollment => (
+                      <tr key={enrollment.id} style={styles.tableRow}>
+                        <td style={styles.td}>
+                          <span style={styles.userName}>{enrollment.user.username}</span>
+                        </td>
+                        <td style={styles.td}>{enrollment.course.title}</td>
+                        <td style={styles.td}>{getStatusBadge(enrollment.status)}</td>
+                        <td style={styles.td}>{formatDate(enrollment.createdAt)}</td>
+                        <td style={styles.td}>
+                          {enrollment.paidAt ? formatDate(enrollment.paidAt) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {enrollments.length === 0 && (
+                  <div style={styles.empty}>暂无报名记录</div>
+                )}
+
+                {enrollmentPagination.totalPages > 1 && (
+                  <div style={styles.pagination}>
                     <button
-                      onClick={() => handleEdit(course)}
-                      style={styles.actionBtn}
+                      onClick={() => setEnrollmentFilter({ ...enrollmentFilter, page: enrollmentFilter.page - 1 })}
+                      disabled={enrollmentFilter.page <= 1}
+                      style={styles.pageBtn}
                     >
-                      编辑
+                      上一页
                     </button>
-                    {course.isActive ? (
-                      <button
-                        onClick={() => handleClose(course.id)}
-                        style={{ ...styles.actionBtn, color: '#d97706' }}
-                      >
-                        关闭
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleReopen(course.id)}
-                        style={{ ...styles.actionBtn, color: '#16a34a' }}
-                      >
-                        开启
-                      </button>
-                    )}
+                    <span style={styles.pageInfo}>
+                      第 {enrollmentFilter.page} 页 / 共 {enrollmentPagination.totalPages} 页
+                      （{enrollmentPagination.total} 条记录）
+                    </span>
                     <button
-                      onClick={() => handleDelete(course.id)}
-                      style={{ ...styles.actionBtn, color: '#dc2626' }}
+                      onClick={() => setEnrollmentFilter({ ...enrollmentFilter, page: enrollmentFilter.page + 1 })}
+                      disabled={enrollmentFilter.page >= enrollmentPagination.totalPages}
+                      style={styles.pageBtn}
                     >
-                      删除
+                      下一页
                     </button>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {courses.length === 0 && (
-          <div style={styles.empty}>暂无课程</div>
-        )}
-      </div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
 
       {showModal && (
         <div style={styles.modalOverlay}>
@@ -351,14 +569,44 @@ const styles = {
     padding: '2rem 1rem',
   },
   header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: '1.5rem',
   },
   title: {
     fontSize: '1.75rem',
     fontWeight: 'bold',
+    color: '#1e293b',
+    margin: 0,
+  },
+  tabs: {
+    display: 'flex',
+    gap: '0.5rem',
+    marginBottom: '1.5rem',
+    borderBottom: '1px solid #e2e8f0',
+  },
+  tab: {
+    padding: '0.75rem 1.5rem',
+    border: 'none',
+    background: 'none',
+    cursor: 'pointer',
+    fontSize: '1rem',
+    color: '#64748b',
+    borderBottom: '2px solid transparent',
+    marginBottom: '-1px',
+    fontWeight: '500',
+  },
+  tabActive: {
+    color: '#2563eb',
+    borderBottomColor: '#2563eb',
+  },
+  subHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '1rem',
+  },
+  subTitle: {
+    fontSize: '1.25rem',
+    fontWeight: '600',
     color: '#1e293b',
     margin: 0,
   },
@@ -371,6 +619,41 @@ const styles = {
     fontSize: '0.95rem',
     fontWeight: '500',
     cursor: 'pointer',
+  },
+  exportBtn: {
+    backgroundColor: '#16a34a',
+    color: 'white',
+    border: 'none',
+    padding: '0.625rem 1.25rem',
+    borderRadius: '8px',
+    fontSize: '0.95rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+  },
+  filterBar: {
+    display: 'flex',
+    gap: '1rem',
+    marginBottom: '1rem',
+    flexWrap: 'wrap',
+  },
+  filterItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+  },
+  filterLabel: {
+    fontSize: '0.85rem',
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  filterSelect: {
+    padding: '0.5rem 0.75rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    fontSize: '0.95rem',
+    outline: 'none',
+    backgroundColor: 'white',
+    minWidth: '200px',
   },
   loading: {
     textAlign: 'center',
@@ -433,6 +716,10 @@ const styles = {
     fontWeight: '500',
     color: '#1e293b',
   },
+  userName: {
+    fontWeight: '500',
+    color: '#1e293b',
+  },
   statusActive: {
     backgroundColor: '#dcfce7',
     color: '#166534',
@@ -464,6 +751,27 @@ const styles = {
   empty: {
     textAlign: 'center',
     padding: '3rem',
+    color: '#64748b',
+  },
+  pagination: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: '1rem',
+    padding: '1.5rem',
+    borderTop: '1px solid #e2e8f0',
+  },
+  pageBtn: {
+    padding: '0.5rem 1rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    backgroundColor: 'white',
+    color: '#475569',
+    fontSize: '0.9rem',
+    cursor: 'pointer',
+  },
+  pageInfo: {
+    fontSize: '0.9rem',
     color: '#64748b',
   },
   modalOverlay: {

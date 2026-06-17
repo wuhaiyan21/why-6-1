@@ -61,6 +61,43 @@ async function migrate() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS waitlists (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+        status VARCHAR(20) NOT NULL DEFAULT 'waiting',
+        position INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, course_id)
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_waitlists_course_id ON waitlists(course_id);
+      CREATE INDEX IF NOT EXISTS idx_waitlists_status ON waitlists(status);
+      CREATE INDEX IF NOT EXISTS idx_waitlists_user_course ON waitlists(user_id, course_id);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type VARCHAR(50) NOT NULL,
+        title VARCHAR(200) NOT NULL,
+        content TEXT NOT NULL,
+        course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,
+        is_read BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
+      CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read);
+    `);
+
+    await client.query(`
       DELETE FROM courses 
       WHERE id NOT IN (
         SELECT MIN(id) FROM courses GROUP BY title

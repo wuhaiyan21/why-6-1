@@ -83,6 +83,19 @@ export const enrollmentAPI = {
       method: 'POST',
     }),
 
+  joinWaitlist: (courseId) =>
+    request(`/courses/${courseId}/waitlist`, {
+      method: 'POST',
+    }),
+
+  cancelWaitlist: (courseId) =>
+    request(`/courses/${courseId}/waitlist/cancel`, {
+      method: 'POST',
+    }),
+
+  getWaitlistStatus: (courseId) =>
+    request(`/courses/${courseId}/waitlist/status`),
+
   pay: (enrollmentId) =>
     request(`/enrollments/${enrollmentId}/pay`, {
       method: 'POST',
@@ -97,4 +110,43 @@ export const enrollmentAPI = {
 
   checkPrerequisites: (courseId) =>
     request(`/courses/${courseId}/prerequisites/check`),
+};
+
+export const notificationAPI = {
+  getNotifications: (unreadOnly = false) =>
+    request(`/notifications${unreadOnly ? '?unreadOnly=true' : ''}`),
+
+  getUnreadCount: () => request('/notifications/unread-count'),
+
+  markAsRead: (notificationId) =>
+    request(`/notifications/${notificationId}/read`, {
+      method: 'PUT',
+    }),
+
+  markAllAsRead: () =>
+    request('/notifications/read-all', {
+      method: 'PUT',
+    }),
+};
+
+export const adminAPI = {
+  getEnrollments: (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return request(`/admin/enrollments${queryString ? `?${queryString}` : ''}`);
+  },
+
+  exportEnrollments: (params = {}) => {
+    const token = localStorage.getItem('token');
+    const queryString = new URLSearchParams(params).toString();
+    return fetch(`/api/admin/enrollments/export${queryString ? `?${queryString}` : ''}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    }).then(response => {
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+      return response.blob();
+    });
+  },
 };

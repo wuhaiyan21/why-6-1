@@ -2,6 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { createCourseTimeChangeNotification } = require('./notifications');
 
 const router = express.Router();
 
@@ -152,6 +153,7 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const course = existingCourse.rows[0];
+    const oldStartDate = course.start_date;
 
     if (capacity !== undefined && capacity !== null) {
       const newCapacity = parseInt(capacity, 10);
@@ -187,6 +189,14 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const updatedCourse = result.rows[0];
+
+    if (startDate !== undefined && startDate !== null) {
+      const newStartDate = new Date(startDate);
+      if (new Date(oldStartDate).getTime() !== newStartDate.getTime()) {
+        await createCourseTimeChangeNotification(id, oldStartDate, newStartDate);
+      }
+    }
+
     res.json({
       id: updatedCourse.id,
       title: updatedCourse.title,
