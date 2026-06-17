@@ -156,6 +156,23 @@ router.put('/notifications/read-all', authenticateToken, async (req, res) => {
   }
 });
 
+router.put('/notifications/course/:courseId/read', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const courseId = parseInt(req.params.courseId, 10);
+
+  try {
+    await db.query(
+      'UPDATE notifications SET is_read = true WHERE user_id = $1 AND course_id = $2 AND is_read = false',
+      [userId, courseId]
+    );
+
+    res.json({ message: 'Course notifications marked as read' });
+  } catch (error) {
+    console.error('Mark course notifications read error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
 module.exports.createNotification = createNotification;
 module.exports.createCourseTimeChangeNotification = createCourseTimeChangeNotification;

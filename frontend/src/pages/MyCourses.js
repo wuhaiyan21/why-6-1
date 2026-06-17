@@ -155,13 +155,15 @@ function MyCourses() {
         n => n.type === 'waitlist_promoted' && !n.isRead
       );
 
-      if (unreadExpired && !shownNotificationIds.has(unreadExpired.id)) {
-        setCancelledNotification(unreadExpired);
-        setShownNotificationIds(prev => new Set([...prev, unreadExpired.id]));
-        loadEnrollments();
-      } else if (unreadPromoted && !shownNotificationIds.has(unreadPromoted.id)) {
-        setCancelledNotification(unreadPromoted);
-        setShownNotificationIds(prev => new Set([...prev, unreadPromoted.id]));
+      const unreadTimeChange = notifications.find(
+        n => n.type === 'course_time_change' && !n.isRead
+      );
+
+      const targetNotification = unreadExpired || unreadPromoted || unreadTimeChange;
+
+      if (targetNotification && !shownNotificationIds.has(targetNotification.id)) {
+        setCancelledNotification(targetNotification);
+        setShownNotificationIds(prev => new Set([...prev, targetNotification.id]));
         loadEnrollments();
       }
     } catch (err) {

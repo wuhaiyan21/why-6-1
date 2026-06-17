@@ -126,8 +126,7 @@ async function processWaitlist(courseId) {
         );
 
         await db.query(
-          `UPDATE waitlists SET status = 'promoted', updated_at = CURRENT_TIMESTAMP 
-           WHERE id = $1`,
+          `DELETE FROM waitlists WHERE id = $1`,
           [waitlistEntry.id]
         );
 
@@ -464,7 +463,7 @@ router.post('/courses/:courseId/waitlist/cancel', authenticateToken, async (req,
 
   try {
     const result = await db.query(
-      "UPDATE waitlists SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND course_id = $2 AND status = 'waiting' RETURNING *",
+      "DELETE FROM waitlists WHERE user_id = $1 AND course_id = $2 AND status = 'waiting' RETURNING *",
       [userId, courseId]
     );
 

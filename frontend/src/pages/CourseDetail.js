@@ -64,6 +64,14 @@ function CourseDetail() {
       setLoading(true);
       const data = await courseAPI.getCourse(id);
       setCourse(data);
+      
+      if (isAuthenticated) {
+        try {
+          await notificationAPI.markCourseAsRead(id);
+        } catch (err) {
+          console.error('Failed to mark course notifications as read:', err);
+        }
+      }
     } catch (err) {
       setError(err.message);
     } finally {

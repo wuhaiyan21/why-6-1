@@ -127,6 +127,11 @@ export const notificationAPI = {
     request('/notifications/read-all', {
       method: 'PUT',
     }),
+
+  markCourseAsRead: (courseId) =>
+    request(`/notifications/course/${courseId}/read`, {
+      method: 'PUT',
+    }),
 };
 
 export const adminAPI = {
