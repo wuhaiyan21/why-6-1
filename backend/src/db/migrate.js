@@ -63,7 +63,6 @@ async function migrate() {
       CREATE INDEX IF NOT EXISTS idx_enrollments_user_id ON enrollments(user_id);
       CREATE INDEX IF NOT EXISTS idx_enrollments_course_id ON enrollments(course_id);
       CREATE INDEX IF NOT EXISTS idx_enrollments_status ON enrollments(status);
-      CREATE INDEX IF NOT EXISTS idx_enrollments_refund_status ON enrollments(refund_status);
     `);
 
     await client.query(`
@@ -85,6 +84,10 @@ async function migrate() {
           ALTER TABLE enrollments ADD COLUMN extended_at TIMESTAMP;
         END IF;
       END $$;
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_enrollments_refund_status ON enrollments(refund_status);
     `);
 
     await client.query(`

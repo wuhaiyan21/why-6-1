@@ -1,6 +1,9 @@
 const express = require('express');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
+const { createNotification } = require('./notifications');
+const enrollmentRoutes = require('./enrollments');
+const processWaitlist = enrollmentRoutes.processWaitlist;
 
 const router = express.Router();
 
@@ -253,11 +256,13 @@ router.get('/waitlists', authenticateToken, requireAdmin, async (req, res) => {
       params
     );
 
-    const getWaitlistPosition = async (courseId, waitlistCreatedAt) => {
+    const getWaitlistPosition = async (courseId, userId) => {
       const positionResult = await db.query(
         `SELECT COUNT(*) as position FROM waitlists 
-         WHERE course_id = $1 AND status = 'waiting' AND created_at <= $2`,
-        [courseId, waitlistCreatedAt]
+         WHERE course_id = $1 AND status = 'waiting' AND created_at <= (
+           SELECT created_at FROM waitlists WHERE course_id = $1 AND user_id = $2 AND status = 'waiting'
+         )`,
+        [courseId, userId]
       );
       return parseInt(positionResult.rows[0].position, 10);
     };
@@ -265,7 +270,7 @@ router.get('/waitlists', authenticateToken, requireAdmin, async (req, res) => {
     const waitlists = [];
     for (const row of result.rows) {
       const position = row.status === 'waiting' 
-        ? await getWaitlistPosition(row.course_id, row.created_at)
+        ? await getWaitlistPosition(row.course_id, row.user_id)
         : null;
       
       waitlists.push({
@@ -322,8 +327,10 @@ router.get('/waitlists/export', authenticateToken, requireAdmin, async (req, res
         w.id,
         w.status,
         w.created_at,
+        u.id as user_id,
         u.username,
         u.email,
+        c.id as course_id,
         c.title as course_title,
         c.is_active as course_is_active
       FROM waitlists w
@@ -334,11 +341,13 @@ router.get('/waitlists/export', authenticateToken, requireAdmin, async (req, res
       params
     );
 
-    const getWaitlistPosition = async (courseId, waitlistCreatedAt) => {
+    const getWaitlistPosition = async (courseId, userId) => {
       const positionResult = await db.query(
         `SELECT COUNT(*) as position FROM waitlists 
-         WHERE course_id = $1 AND status = 'waiting' AND created_at <= $2`,
-        [courseId, waitlistCreatedAt]
+         WHERE course_id = $1 AND status = 'waiting' AND created_at <= (
+           SELECT created_at FROM waitlists WHERE course_id = $1 AND user_id = $2 AND status = 'waiting'
+         )`,
+        [courseId, userId]
       );
       return parseInt(positionResult.rows[0].position, 10);
     };
@@ -361,7 +370,7 @@ router.get('/waitlists/export', authenticateToken, requireAdmin, async (req, res
 
     for (const row of result.rows) {
       const position = row.status === 'waiting' 
-        ? await getWaitlistPosition(row.course_id, row.created_at)
+        ? await getWaitlistPosition(row.course_id, row.user_id)
         : '-';
       
       const values = [
@@ -409,8 +418,6 @@ router.post('/enrollments/:enrollmentId/refund/approve', authenticateToken, requ
     }
 
     const { getRedisClient } = require('../db/redis');
-    const { createNotification } = require('./notifications');
-    const client = getRedisClient();
 
     await db.query('BEGIN');
 
@@ -430,7 +437,6 @@ router.post('/enrollments/:enrollmentId/refund/approve', authenticateToken, requ
 
     await db.query('COMMIT');
 
-    const { processWaitlist } = require('./enrollments');
     const promotedUsers = await processWaitlist(enrollment.course_id);
 
     await createNotification(
@@ -474,8 +480,6 @@ router.post('/enrollments/:enrollmentId/refund/reject', authenticateToken, requi
     if (enrollment.refund_status !== 'pending') {
       return res.status(400).json({ error: 'No pending refund request for this enrollment' });
     }
-
-    const { createNotification } = require('./notifications');
 
     await db.query(
       `UPDATE enrollments 

@@ -894,4 +894,6 @@ router.post('/enrollments/:enrollmentId/extend', authenticateToken, async (req, 
   }
 });
 
+router.processWaitlist = processWaitlist;
+
 module.exports = router;

@@ -488,9 +488,19 @@ function MyCourses() {
                           ⏳ 退课审核中，请等待管理员处理
                         </span>
                       ) : item.refundStatus === 'rejected' ? (
-                        <span style={styles.completedTag}>
-                          ✓ 报名成功，请等待开课
-                        </span>
+                        <>
+                          <span style={{ ...styles.completedTag, color: '#d97706' }}>
+                            ✗ 退课申请已被驳回
+                          </span>
+                          {new Date(item.course.startDate) > new Date() && (
+                            <button
+                              onClick={() => handleRequestRefund(item.id)}
+                              style={styles.refundBtn}
+                            >
+                              重新申请退课
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <>
                           <span style={styles.completedTag}>
