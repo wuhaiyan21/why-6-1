@@ -49,6 +49,11 @@ async function migrate() {
         reserved_until TIMESTAMP,
         paid_at TIMESTAMP,
         completed BOOLEAN DEFAULT false,
+        refund_status VARCHAR(20) DEFAULT NULL,
+        refund_requested_at TIMESTAMP,
+        refund_reason TEXT,
+        has_extended BOOLEAN DEFAULT false,
+        extended_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(user_id, course_id)
       )
@@ -58,6 +63,28 @@ async function migrate() {
       CREATE INDEX IF NOT EXISTS idx_enrollments_user_id ON enrollments(user_id);
       CREATE INDEX IF NOT EXISTS idx_enrollments_course_id ON enrollments(course_id);
       CREATE INDEX IF NOT EXISTS idx_enrollments_status ON enrollments(status);
+      CREATE INDEX IF NOT EXISTS idx_enrollments_refund_status ON enrollments(refund_status);
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'refund_status') THEN
+          ALTER TABLE enrollments ADD COLUMN refund_status VARCHAR(20) DEFAULT NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'refund_requested_at') THEN
+          ALTER TABLE enrollments ADD COLUMN refund_requested_at TIMESTAMP;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'refund_reason') THEN
+          ALTER TABLE enrollments ADD COLUMN refund_reason TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'has_extended') THEN
+          ALTER TABLE enrollments ADD COLUMN has_extended BOOLEAN DEFAULT false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'extended_at') THEN
+          ALTER TABLE enrollments ADD COLUMN extended_at TIMESTAMP;
+        END IF;
+      END $$;
     `);
 
     await client.query(`

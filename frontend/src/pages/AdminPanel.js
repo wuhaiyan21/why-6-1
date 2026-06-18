@@ -46,6 +46,22 @@ function AdminPanel() {
     totalPages: 0,
   });
 
+  const [waitlists, setWaitlists] = useState([]);
+  const [waitlistsLoading, setWaitlistsLoading] = useState(false);
+  const [waitlistFilter, setWaitlistFilter] = useState({
+    courseId: '',
+    page: 1,
+    limit: 20,
+  });
+  const [waitlistPagination, setWaitlistPagination] = useState({
+    total: 0,
+    totalPages: 0,
+  });
+
+  const [rejectModal, setRejectModal] = useState(false);
+  const [rejectingEnrollmentId, setRejectingEnrollmentId] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
@@ -59,7 +75,13 @@ function AdminPanel() {
     if (isAdmin && activeTab === 'enrollments') {
       loadEnrollments();
     }
-  }, [isAdmin, activeTab, enrollmentFilter]);
+  }, [isAdmin, activeTab, enrollmentFilter, loadEnrollments]);
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'waitlists') {
+      loadWaitlists();
+    }
+  }, [isAdmin, activeTab, waitlistFilter, loadWaitlists]);
 
   const loadCourses = async () => {
     try {
@@ -115,13 +137,99 @@ function AdminPanel() {
     }
   };
 
-  const getStatusBadge = (status) => {
+  const loadWaitlists = async () => {
+    try {
+      setWaitlistsLoading(true);
+      const params = {};
+      if (waitlistFilter.courseId) params.courseId = waitlistFilter.courseId;
+      params.page = waitlistFilter.page;
+      params.limit = waitlistFilter.limit;
+
+      const data = await adminAPI.getWaitlists(params);
+      setWaitlists(data.waitlists);
+      setWaitlistPagination({
+        total: data.total,
+        totalPages: data.totalPages,
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setWaitlistsLoading(false);
+    }
+  };
+
+  const handleExportWaitlistsCSV = async () => {
+    try {
+      const params = {};
+      if (waitlistFilter.courseId) params.courseId = waitlistFilter.courseId;
+
+      const blob = await adminAPI.exportWaitlists(params);
+      const url = window.URL.createObjectURL(new Blob([blob]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'waitlists.csv');
+      document.body.appendChild(link);
+      link.click();
+      link.parentNode.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('导出失败：' + err.message);
+    }
+  };
+
+  const handleApproveRefund = async (enrollmentId) => {
+    if (!window.confirm('确定要通过该退课申请吗？通过后名额将释放给候补用户。')) {
+      return;
+    }
+    try {
+      setError('');
+      await adminAPI.approveRefund(enrollmentId);
+      loadEnrollments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleOpenRejectModal = (enrollmentId) => {
+    setRejectingEnrollmentId(enrollmentId);
+    setRejectReason('');
+    setRejectModal(true);
+  };
+
+  const handleRejectRefund = async () => {
+    if (!rejectingEnrollmentId) return;
+    
+    try {
+      setError('');
+      await adminAPI.rejectRefund(rejectingEnrollmentId, rejectReason);
+      setRejectModal(false);
+      setRejectingEnrollmentId(null);
+      loadEnrollments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const getStatusBadge = (status, refundStatus) => {
     const stylesMap = {
       pending: { bg: '#fef3c7', color: '#92400e', text: '待支付' },
       paid: { bg: '#dcfce7', color: '#166534', text: '已支付' },
       cancelled: { bg: '#fee2e2', color: '#991b1b', text: '已取消' },
+      refund_pending: { bg: '#fef3c7', color: '#92400e', text: '退课审核中' },
+      refund_approved: { bg: '#fee2e2', color: '#991b1b', text: '已退课' },
+      refund_rejected: { bg: '#dcfce7', color: '#166534', text: '已支付' },
     };
-    const style = stylesMap[status] || stylesMap.pending;
+    
+    let displayStatus = status;
+    if (refundStatus === 'pending') {
+      displayStatus = 'refund_pending';
+    } else if (refundStatus === 'approved') {
+      displayStatus = 'refund_approved';
+    } else if (refundStatus === 'rejected') {
+      displayStatus = 'refund_rejected';
+    }
+    
+    const style = stylesMap[displayStatus] || stylesMap.pending;
     return (
       <span style={{
         backgroundColor: style.bg,
@@ -272,6 +380,15 @@ function AdminPanel() {
         >
           报名明细
         </button>
+        <button 
+          onClick={() => setActiveTab('waitlists')}
+          style={{
+            ...styles.tab,
+            ...(activeTab === 'waitlists' ? styles.tabActive : {}),
+          }}
+        >
+          候补记录
+        </button>
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
@@ -402,6 +519,7 @@ function AdminPanel() {
                 <option value="pending">待支付</option>
                 <option value="paid">已支付</option>
                 <option value="cancelled">已取消</option>
+                <option value="refund_pending">退课审核中</option>
               </select>
             </div>
           </div>
@@ -419,6 +537,7 @@ function AdminPanel() {
                       <th style={styles.th}>状态</th>
                       <th style={styles.th}>报名时间</th>
                       <th style={styles.th}>支付时间</th>
+                      <th style={styles.th}>操作</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -428,10 +547,34 @@ function AdminPanel() {
                           <span style={styles.userName}>{enrollment.user.username}</span>
                         </td>
                         <td style={styles.td}>{enrollment.course.title}</td>
-                        <td style={styles.td}>{getStatusBadge(enrollment.status)}</td>
+                        <td style={styles.td}>{getStatusBadge(enrollment.status, enrollment.refundStatus)}</td>
                         <td style={styles.td}>{formatDate(enrollment.createdAt)}</td>
                         <td style={styles.td}>
                           {enrollment.paidAt ? formatDate(enrollment.paidAt) : '-'}
+                        </td>
+                        <td style={styles.td}>
+                          {enrollment.refundStatus === 'pending' && (
+                            <div style={styles.actions}>
+                              <button
+                                onClick={() => handleApproveRefund(enrollment.id)}
+                                style={{ ...styles.actionBtn, color: '#16a34a' }}
+                              >
+                                通过
+                              </button>
+                              <button
+                                onClick={() => handleOpenRejectModal(enrollment.id)}
+                                style={{ ...styles.actionBtn, color: '#dc2626' }}
+                              >
+                                驳回
+                              </button>
+                            </div>
+                          )}
+                          {enrollment.refundStatus === 'approved' && (
+                            <span style={{ color: '#16a34a', fontSize: '0.85rem' }}>已通过</span>
+                          )}
+                          {enrollment.refundStatus === 'rejected' && (
+                            <span style={{ color: '#dc2626', fontSize: '0.85rem' }}>已驳回</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -468,6 +611,140 @@ function AdminPanel() {
             )}
           </div>
         </>
+      )}
+
+      {activeTab === 'waitlists' && (
+        <>
+          <div style={styles.subHeader}>
+            <h2 style={styles.subTitle}>候补记录</h2>
+            <button onClick={handleExportWaitlistsCSV} style={styles.exportBtn}>
+              📥 导出CSV
+            </button>
+          </div>
+
+          <div style={styles.filterBar}>
+            <div style={styles.filterItem}>
+              <label style={styles.filterLabel}>筛选课程</label>
+              <select
+                value={waitlistFilter.courseId}
+                onChange={(e) => setWaitlistFilter({ ...waitlistFilter, courseId: e.target.value, page: 1 })}
+                style={styles.filterSelect}
+              >
+                <option value="">全部课程</option>
+                {courses.map(course => (
+                  <option key={course.id} value={course.id}>
+                    {course.title} {course.isActive ? '' : '(已关闭)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={styles.tableContainer}>
+            {waitlistsLoading ? (
+              <div style={styles.loading}>加载中...</div>
+            ) : (
+              <>
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeader}>
+                      <th style={styles.th}>用户名</th>
+                      <th style={styles.th}>课程名称</th>
+                      <th style={styles.th}>排队顺位</th>
+                      <th style={styles.th}>加入时间</th>
+                      <th style={styles.th}>课程状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {waitlists.map(waitlist => (
+                      <tr key={waitlist.id} style={styles.tableRow}>
+                        <td style={styles.td}>
+                          <span style={styles.userName}>{waitlist.user.username}</span>
+                        </td>
+                        <td style={styles.td}>{waitlist.course.title}</td>
+                        <td style={styles.td}>
+                          <span style={{ fontWeight: 'bold', color: '#3730a3' }}>
+                            第 {waitlist.position} 位
+                          </span>
+                        </td>
+                        <td style={styles.td}>{formatDate(waitlist.createdAt)}</td>
+                        <td style={styles.td}>
+                          {waitlist.course.isActive ? (
+                            <span style={styles.statusActive}>招生中</span>
+                          ) : (
+                            <span style={styles.statusClosed}>已关闭</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {waitlists.length === 0 && (
+                  <div style={styles.empty}>暂无候补记录</div>
+                )}
+
+                {waitlistPagination.totalPages > 1 && (
+                  <div style={styles.pagination}>
+                    <button
+                      onClick={() => setWaitlistFilter({ ...waitlistFilter, page: waitlistFilter.page - 1 })}
+                      disabled={waitlistFilter.page <= 1}
+                      style={styles.pageBtn}
+                    >
+                      上一页
+                    </button>
+                    <span style={styles.pageInfo}>
+                      第 {waitlistFilter.page} 页 / 共 {waitlistPagination.totalPages} 页
+                      （{waitlistPagination.total} 条记录）
+                    </span>
+                    <button
+                      onClick={() => setWaitlistFilter({ ...waitlistFilter, page: waitlistFilter.page + 1 })}
+                      disabled={waitlistFilter.page >= waitlistPagination.totalPages}
+                      style={styles.pageBtn}
+                    >
+                      下一页
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {rejectModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modal}>
+            <h2 style={styles.modalTitle}>驳回退课申请</h2>
+            <form onSubmit={(e) => { e.preventDefault(); handleRejectRefund(); }} style={styles.form}>
+              {formError && <div style={styles.modalError}>{formError}</div>}
+
+              <div style={styles.field}>
+                <label style={styles.label}>驳回原因（可选）</label>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  style={styles.textarea}
+                  rows={4}
+                  placeholder="请输入驳回原因..."
+                />
+              </div>
+
+              <div style={styles.modalActions}>
+                <button
+                  type="button"
+                  onClick={() => setRejectModal(false)}
+                  style={styles.cancelBtn}
+                >
+                  取消
+                </button>
+                <button type="submit" style={{ ...styles.submitBtn, backgroundColor: '#dc2626' }}>
+                  确认驳回
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
 
       {showModal && (

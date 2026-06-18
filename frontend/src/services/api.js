@@ -96,6 +96,9 @@ export const enrollmentAPI = {
   getWaitlistStatus: (courseId) =>
     request(`/courses/${courseId}/waitlist/status`),
 
+  getWaitlistCount: (courseId) =>
+    request(`/courses/${courseId}/waitlist/count`),
+
   pay: (enrollmentId) =>
     request(`/enrollments/${enrollmentId}/pay`, {
       method: 'POST',
@@ -103,6 +106,17 @@ export const enrollmentAPI = {
 
   cancel: (enrollmentId) =>
     request(`/enrollments/${enrollmentId}/cancel`, {
+      method: 'POST',
+    }),
+
+  requestRefund: (enrollmentId, reason) =>
+    request(`/enrollments/${enrollmentId}/refund`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  extendPayment: (enrollmentId) =>
+    request(`/enrollments/${enrollmentId}/extend`, {
       method: 'POST',
     }),
 
@@ -154,4 +168,35 @@ export const adminAPI = {
       return response.blob();
     });
   },
+
+  getWaitlists: (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return request(`/admin/waitlists${queryString ? `?${queryString}` : ''}`);
+  },
+
+  exportWaitlists: (params = {}) => {
+    const token = localStorage.getItem('token');
+    const queryString = new URLSearchParams(params).toString();
+    return fetch(`/api/admin/waitlists/export${queryString ? `?${queryString}` : ''}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    }).then(response => {
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+      return response.blob();
+    });
+  },
+
+  approveRefund: (enrollmentId) =>
+    request(`/admin/enrollments/${enrollmentId}/refund/approve`, {
+      method: 'POST',
+    }),
+
+  rejectRefund: (enrollmentId, reason) =>
+    request(`/admin/enrollments/${enrollmentId}/refund/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
 };

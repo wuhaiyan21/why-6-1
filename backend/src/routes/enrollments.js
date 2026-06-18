@@ -608,11 +608,17 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
         e.paid_at,
         e.completed,
         e.created_at,
+        e.refund_status,
+        e.refund_requested_at,
+        e.refund_reason,
+        e.has_extended,
+        e.extended_at,
         c.id as course_id,
         c.title as course_title,
         c.description as course_description,
         c.start_date,
-        c.capacity
+        c.capacity,
+        c.is_active as course_is_active
       FROM enrollments e
       JOIN courses c ON e.course_id = c.id
       WHERE e.user_id = $1
@@ -629,7 +635,8 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
         c.title as course_title,
         c.description as course_description,
         c.start_date,
-        c.capacity
+        c.capacity,
+        c.is_active as course_is_active
       FROM waitlists w
       JOIN courses c ON w.course_id = c.id
       WHERE w.user_id = $1 AND w.status = 'waiting'
@@ -645,12 +652,18 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
       paidAt: row.paid_at,
       completed: row.completed,
       createdAt: row.created_at,
+      refundStatus: row.refund_status,
+      refundRequestedAt: row.refund_requested_at,
+      refundReason: row.refund_reason,
+      hasExtended: row.has_extended,
+      extendedAt: row.extended_at,
       course: {
         id: row.course_id,
         title: row.course_title,
         description: row.course_description,
         startDate: row.start_date,
-        capacity: row.capacity
+        capacity: row.capacity,
+        isActive: row.course_is_active
       }
     }));
 
@@ -668,7 +681,8 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
           title: row.course_title,
           description: row.course_description,
           startDate: row.start_date,
-          capacity: row.capacity
+          capacity: row.capacity,
+          isActive: row.course_is_active
         }
       });
     }
@@ -693,6 +707,189 @@ router.get('/courses/:courseId/prerequisites/check', authenticateToken, async (r
     res.json(check);
   } catch (error) {
     console.error('Check prerequisites error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.get('/courses/:courseId/waitlist/count', async (req, res) => {
+  const courseId = parseInt(req.params.courseId, 10);
+  
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.startsWith('Bearer ') 
+    ? authHeader.split(' ')[1] 
+    : null;
+  
+  let userId = null;
+  if (token) {
+    try {
+      const jwt = require('jsonwebtoken');
+      const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret-key';
+      const decoded = jwt.verify(token, JWT_SECRET);
+      userId = decoded.id;
+    } catch {
+      userId = null;
+    }
+  }
+
+  try {
+    const totalCount = await getWaitlistCount(courseId);
+    
+    let displayCount = totalCount;
+    let userPosition = null;
+    let isUserOnWaitlist = false;
+
+    if (userId) {
+      const userWaitlist = await db.query(
+        "SELECT * FROM waitlists WHERE user_id = $1 AND course_id = $2 AND status = 'waiting'",
+        [userId, courseId]
+      );
+      
+      if (userWaitlist.rows.length > 0) {
+        isUserOnWaitlist = true;
+        userPosition = await getWaitlistPosition(courseId, userId);
+      }
+    }
+
+    res.json({
+      totalCount,
+      displayCount,
+      userPosition,
+      isUserOnWaitlist,
+    });
+  } catch (error) {
+    console.error('Get waitlist count error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/enrollments/:enrollmentId/refund', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const enrollmentId = parseInt(req.params.enrollmentId, 10);
+  const { reason } = req.body;
+
+  try {
+    const enrollmentResult = await db.query(
+      `SELECT e.*, c.start_date, c.title 
+       FROM enrollments e 
+       JOIN courses c ON e.course_id = c.id 
+       WHERE e.id = $1 AND e.user_id = $2`,
+      [enrollmentId, userId]
+    );
+
+    if (enrollmentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Enrollment not found' });
+    }
+
+    const enrollment = enrollmentResult.rows[0];
+
+    if (enrollment.status !== 'paid') {
+      return res.status(400).json({ error: 'Only paid enrollments can request refund' });
+    }
+
+    if (enrollment.refund_status === 'pending') {
+      return res.status(400).json({ error: 'Refund request already submitted and under review' });
+    }
+
+    if (new Date(enrollment.start_date) <= new Date()) {
+      return res.status(400).json({ error: 'Cannot request refund after course has started' });
+    }
+
+    await db.query(
+      `UPDATE enrollments 
+       SET refund_status = 'pending', 
+           refund_requested_at = CURRENT_TIMESTAMP,
+           refund_reason = $1
+       WHERE id = $2`,
+      [reason, enrollmentId]
+    );
+
+    await createNotification(
+      userId,
+      'refund_requested',
+      `退课申请已提交：${enrollment.title}`,
+      `您的「${enrollment.title}」退课申请已提交，正在等待管理员审核。`,
+      enrollment.course_id
+    );
+
+    res.json({ message: 'Refund request submitted successfully' });
+  } catch (error) {
+    console.error('Refund request error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/enrollments/:enrollmentId/extend', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const enrollmentId = parseInt(req.params.enrollmentId, 10);
+
+  try {
+    const enrollmentResult = await db.query(
+      `SELECT e.*, c.title 
+       FROM enrollments e 
+       JOIN courses c ON e.course_id = c.id 
+       WHERE e.id = $1 AND e.user_id = $2`,
+      [enrollmentId, userId]
+    );
+
+    if (enrollmentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Enrollment not found' });
+    }
+
+    const enrollment = enrollmentResult.rows[0];
+
+    if (enrollment.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending enrollments can be extended' });
+    }
+
+    if (enrollment.has_extended) {
+      return res.status(400).json({ error: 'Extension already used for this enrollment' });
+    }
+
+    const now = new Date();
+    const reservedUntil = new Date(enrollment.reserved_until);
+    
+    if (reservedUntil <= now) {
+      return res.status(400).json({ error: 'Cannot extend expired reservation' });
+    }
+
+    const remainingSeconds = (reservedUntil - now) / 1000;
+    if (remainingSeconds > 300) {
+      return res.status(400).json({ error: 'Extension not available when remaining time exceeds 5 minutes' });
+    }
+
+    const newReservedUntil = new Date(reservedUntil.getTime() + 5 * 60 * 1000);
+
+    const client = getRedisClient();
+    const reservationKey = getReservationKey(enrollment.course_id, userId);
+    
+    const ttl = await client.ttl(reservationKey);
+    if (ttl > 0) {
+      await client.expire(reservationKey, ttl + 300);
+    }
+
+    await db.query(
+      `UPDATE enrollments 
+       SET reserved_until = $1, 
+           has_extended = true,
+           extended_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [newReservedUntil, enrollmentId]
+    );
+
+    await createNotification(
+      userId,
+      'payment_extended',
+      `支付时间已延长：${enrollment.title}`,
+      `您的「${enrollment.title}」待支付订单已延长5分钟支付时间，请尽快完成支付。`,
+      enrollment.course_id
+    );
+
+    res.json({
+      message: 'Payment time extended successfully',
+      reservedUntil: newReservedUntil,
+    });
+  } catch (error) {
+    console.error('Extend payment error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

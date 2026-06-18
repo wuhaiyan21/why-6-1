@@ -27,6 +27,7 @@ function CourseDetail() {
   const [prereqCheck, setPrereqCheck] = useState(null);
   const [message, setMessage] = useState('');
   const [waitlistStatus, setWaitlistStatus] = useState(null);
+  const [waitlistCount, setWaitlistCount] = useState(null);
 
   const loadWaitlistStatus = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -37,6 +38,15 @@ function CourseDetail() {
       console.error('Failed to get waitlist status:', err);
     }
   }, [id, isAuthenticated]);
+
+  const loadWaitlistCount = useCallback(async () => {
+    try {
+      const data = await enrollmentAPI.getWaitlistCount(id);
+      setWaitlistCount(data);
+    } catch (err) {
+      console.error('Failed to get waitlist count:', err);
+    }
+  }, [id]);
 
   const checkPrerequisites = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -50,14 +60,17 @@ function CourseDetail() {
 
   useEffect(() => {
     loadCourse();
-  }, [id]);
+  }, [id, loadCourse]);
 
   useEffect(() => {
     if (isAuthenticated && course) {
       checkPrerequisites();
       loadWaitlistStatus();
     }
-  }, [isAuthenticated, course, checkPrerequisites, loadWaitlistStatus]);
+    if (course) {
+      loadWaitlistCount();
+    }
+  }, [isAuthenticated, course, checkPrerequisites, loadWaitlistStatus, loadWaitlistCount]);
 
   const loadCourse = async () => {
     try {
@@ -91,6 +104,7 @@ function CourseDetail() {
       await enrollmentAPI.joinWaitlist(id);
       setMessage('成功加入候补队列！');
       loadWaitlistStatus();
+      loadWaitlistCount();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -108,6 +122,7 @@ function CourseDetail() {
       await enrollmentAPI.cancelWaitlist(id);
       setMessage('已取消候补');
       loadWaitlistStatus();
+      loadWaitlistCount();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -124,7 +139,7 @@ function CourseDetail() {
     try {
       setEnrolling(true);
       setError('');
-      const result = await enrollmentAPI.enroll(id);
+      await enrollmentAPI.enroll(id);
       setMessage('报名成功！请在15分钟内完成支付。');
       setTimeout(() => {
         navigate('/my-courses');
@@ -251,6 +266,14 @@ function CourseDetail() {
               </button>
             ) : (
               <>
+                {waitlistCount && waitlistCount.totalCount > 0 && (
+                  <div style={styles.waitlistCountInfo}>
+                    <span style={styles.waitlistCountText}>
+                      📋 当前候补人数：<strong>{waitlistCount.displayCount}</strong> 人
+                    </span>
+                  </div>
+                )}
+                
                 {waitlistStatus && waitlistStatus.onWaitlist ? (
                   <>
                     <div style={styles.waitlistInfo}>
@@ -258,7 +281,12 @@ function CourseDetail() {
                         📋 您已加入候补队列
                       </p>
                       <p style={styles.waitlistPosition}>
-                        当前排名：第 <strong>{waitlistStatus.position}</strong> 位
+                        您的排名：第 <strong>{waitlistStatus.position}</strong> 位
+                        {waitlistCount && waitlistCount.totalCount > 0 && (
+                          <span style={styles.waitlistCountDetail}>
+                            （共 {waitlistCount.totalCount} 人候补中）
+                          </span>
+                        )}
                       </p>
                     </div>
                     <button
@@ -284,6 +312,11 @@ function CourseDetail() {
                     }}
                   >
                     {waitlisting ? '加入中...' : '加入候补'}
+                    {waitlistCount && waitlistCount.totalCount > 0 && (
+                      <span style={styles.waitlistBtnCount}>
+                        （{waitlistCount.displayCount}人候补中）
+                      </span>
+                    )}
                   </button>
                 )}
               </>
@@ -483,6 +516,31 @@ const styles = {
     fontWeight: '500',
     cursor: 'pointer',
     marginTop: '0.5rem',
+  },
+  waitlistCountInfo: {
+    backgroundColor: '#fffbeb',
+    border: '1px solid #fde68a',
+    borderRadius: '8px',
+    padding: '0.75rem 1rem',
+    marginTop: '1rem',
+    marginBottom: '0.5rem',
+    textAlign: 'center',
+  },
+  waitlistCountText: {
+    color: '#92400e',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+  },
+  waitlistCountDetail: {
+    color: '#78350f',
+    fontSize: '0.8rem',
+    marginLeft: '0.25rem',
+    fontWeight: 'normal',
+  },
+  waitlistBtnCount: {
+    fontSize: '0.85rem',
+    fontWeight: 'normal',
+    marginLeft: '0.25rem',
   },
   waitlistInfo: {
     backgroundColor: '#fffbeb',

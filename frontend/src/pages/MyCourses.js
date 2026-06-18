@@ -119,7 +119,6 @@ function MyCourses() {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('all');
   const [cancelledNotification, setCancelledNotification] = useState(null);
-  const [promotedFromWaitlist, setPromotedFromWaitlist] = useState(false);
   const [shownNotificationIds, setShownNotificationIds] = useState(new Set());
   
   const { isAuthenticated } = useAuth();
@@ -212,14 +211,66 @@ function MyCourses() {
     }
   };
 
-  const getStatusBadge = (status, type) => {
+  const handleRequestRefund = async (enrollmentId) => {
+    const reason = window.prompt('请输入退课原因（可选）：');
+    if (reason === null) return;
+    
+    if (!window.confirm('确定要申请退课吗？退课后名额将释放给其他候补用户。')) {
+      return;
+    }
+    try {
+      await enrollmentAPI.requestRefund(enrollmentId, reason || '');
+      loadEnrollments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleExtendPayment = async (enrollmentId) => {
+    if (!window.confirm('确定要延长5分钟支付时间吗？每门课程只能延长一次。')) {
+      return;
+    }
+    try {
+      await enrollmentAPI.extendPayment(enrollmentId);
+      loadEnrollments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const canExtend = (item) => {
+    if (item.type !== 'enrollment' || item.status !== 'pending') return false;
+    if (item.hasExtended) return false;
+    if (!item.reservedUntil) return false;
+    
+    const now = new Date();
+    const reservedUntil = new Date(item.reservedUntil);
+    if (reservedUntil <= now) return false;
+    
+    const remainingSeconds = (reservedUntil - now) / 1000;
+    return remainingSeconds <= 300;
+  };
+
+  const getStatusBadge = (status, type, refundStatus) => {
     const stylesMap = {
       pending: { bg: '#fef3c7', color: '#92400e', text: '待支付' },
       paid: { bg: '#dcfce7', color: '#166534', text: '已支付' },
       cancelled: { bg: '#fee2e2', color: '#991b1b', text: '已取消' },
       waiting: { bg: '#e0e7ff', color: '#3730a3', text: '候补中' },
+      refund_pending: { bg: '#fef3c7', color: '#92400e', text: '退课审核中' },
+      refund_approved: { bg: '#fee2e2', color: '#991b1b', text: '已退课' },
+      refund_rejected: { bg: '#dcfce7', color: '#166534', text: '已支付' },
     };
-    const displayStatus = type === 'waitlist' ? 'waiting' : status;
+    
+    let displayStatus = type === 'waitlist' ? 'waiting' : status;
+    if (refundStatus === 'pending') {
+      displayStatus = 'refund_pending';
+    } else if (refundStatus === 'approved') {
+      displayStatus = 'refund_approved';
+    } else if (refundStatus === 'rejected') {
+      displayStatus = 'refund_rejected';
+    }
+    
     const style = stylesMap[displayStatus] || stylesMap.pending;
     return (
       <span style={{
@@ -348,7 +399,7 @@ function MyCourses() {
                   >
                     {item.course.title}
                   </Link>
-                  {getStatusBadge(item.status, item.type)}
+                  {getStatusBadge(item.status, item.type, item.refundStatus)}
                 </div>
 
                 <div style={styles.cardBody}>
@@ -414,6 +465,14 @@ function MyCourses() {
                       >
                         立即支付
                       </button>
+                      {canExtend(item) && (
+                        <button
+                          onClick={() => handleExtendPayment(item.id)}
+                          style={styles.extendBtn}
+                        >
+                          延长5分钟
+                        </button>
+                      )}
                       <button
                         onClick={() => handleCancel(item.id, item.course.id)}
                         style={styles.cancelBtn}
@@ -422,9 +481,36 @@ function MyCourses() {
                       </button>
                     </>
                   )}
-                  {item.type === 'enrollment' && item.status === 'paid' && (
+                  {item.type === 'enrollment' && item.status === 'paid' && item.refundStatus !== 'approved' && (
+                    <>
+                      {item.refundStatus === 'pending' ? (
+                        <span style={styles.completedTag}>
+                          ⏳ 退课审核中，请等待管理员处理
+                        </span>
+                      ) : item.refundStatus === 'rejected' ? (
+                        <span style={styles.completedTag}>
+                          ✓ 报名成功，请等待开课
+                        </span>
+                      ) : (
+                        <>
+                          <span style={styles.completedTag}>
+                            ✓ 报名成功，请等待开课
+                          </span>
+                          {new Date(item.course.startDate) > new Date() && (
+                            <button
+                              onClick={() => handleRequestRefund(item.id)}
+                              style={styles.refundBtn}
+                            >
+                              申请退课
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                  {item.type === 'enrollment' && item.refundStatus === 'approved' && (
                     <span style={styles.completedTag}>
-                      ✓ 报名成功，请等待开课
+                      ✗ 已退课
                     </span>
                   )}
                   {item.type === 'waitlist' && (
@@ -598,6 +684,26 @@ const styles = {
     cursor: 'pointer',
   },
   cancelBtn: {
+    backgroundColor: 'white',
+    color: '#dc2626',
+    border: '1px solid #fecaca',
+    padding: '0.5rem 1.25rem',
+    borderRadius: '6px',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+  },
+  extendBtn: {
+    backgroundColor: '#f59e0b',
+    color: 'white',
+    border: 'none',
+    padding: '0.5rem 1.25rem',
+    borderRadius: '6px',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+  },
+  refundBtn: {
     backgroundColor: 'white',
     color: '#dc2626',
     border: '1px solid #fecaca',
