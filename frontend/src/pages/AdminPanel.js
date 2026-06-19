@@ -62,6 +62,18 @@ function AdminPanel() {
   const [rejectingEnrollmentId, setRejectingEnrollmentId] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
 
+  const [operationLogs, setOperationLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logFilter, setLogFilter] = useState({
+    courseId: '',
+    page: 1,
+    limit: 20,
+  });
+  const [logPagination, setLogPagination] = useState({
+    total: 0,
+    totalPages: 0,
+  });
+
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
@@ -82,6 +94,12 @@ function AdminPanel() {
       loadWaitlists();
     }
   }, [isAdmin, activeTab, waitlistFilter, loadWaitlists]);
+
+  useEffect(() => {
+    if (isAdmin && activeTab === 'logs') {
+      loadOperationLogs();
+    }
+  }, [isAdmin, activeTab, logFilter]);
 
   const loadCourses = async () => {
     try {
@@ -175,6 +193,38 @@ function AdminPanel() {
     } catch (err) {
       setError('导出失败：' + err.message);
     }
+  };
+
+  const loadOperationLogs = async () => {
+    try {
+      setLogsLoading(true);
+      const params = {};
+      if (logFilter.courseId) params.courseId = logFilter.courseId;
+      params.page = logFilter.page;
+      params.limit = logFilter.limit;
+
+      const data = await adminAPI.getOperationLogs(params);
+      setOperationLogs(data.logs);
+      setLogPagination({
+        total: data.total,
+        totalPages: data.totalPages,
+      });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const getActionTypeText = (actionType) => {
+    const actionMap = {
+      refund_approved: '退课通过',
+      refund_rejected: '退课驳回',
+      capacity_changed: '名额调整',
+      enrollment_closed: '关闭招生',
+      enrollment_reopened: '重新开放',
+    };
+    return actionMap[actionType] || actionType;
   };
 
   const handleApproveRefund = async (enrollmentId) => {
@@ -388,6 +438,15 @@ function AdminPanel() {
           }}
         >
           候补记录
+        </button>
+        <button 
+          onClick={() => setActiveTab('logs')}
+          style={{
+            ...styles.tab,
+            ...(activeTab === 'logs' ? styles.tabActive : {}),
+          }}
+        >
+          操作日志
         </button>
       </div>
 
@@ -700,6 +759,120 @@ function AdminPanel() {
                     <button
                       onClick={() => setWaitlistFilter({ ...waitlistFilter, page: waitlistFilter.page + 1 })}
                       disabled={waitlistFilter.page >= waitlistPagination.totalPages}
+                      style={styles.pageBtn}
+                    >
+                      下一页
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'logs' && (
+        <>
+          <div style={styles.subHeader}>
+            <h2 style={styles.subTitle}>操作日志</h2>
+          </div>
+
+          <div style={styles.filterBar}>
+            <div style={styles.filterItem}>
+              <label style={styles.filterLabel}>筛选课程</label>
+              <select
+                value={logFilter.courseId}
+                onChange={(e) => setLogFilter({ ...logFilter, courseId: e.target.value, page: 1 })}
+                style={styles.filterSelect}
+              >
+                <option value="">全部课程</option>
+                {courses.map(course => (
+                  <option key={course.id} value={course.id}>
+                    {course.title} {course.isActive ? '' : '(已关闭)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={styles.tableContainer}>
+            {logsLoading ? (
+              <div style={styles.loading}>加载中...</div>
+            ) : (
+              <>
+                <table style={styles.table}>
+                  <thead>
+                    <tr style={styles.tableHeader}>
+                      <th style={styles.th}>操作人</th>
+                      <th style={styles.th}>动作类型</th>
+                      <th style={styles.th}>目标课程</th>
+                      <th style={styles.th}>操作时间</th>
+                      <th style={styles.th}>摘要</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {operationLogs.map(log => (
+                      <tr key={log.id} style={styles.tableRow}>
+                        <td style={styles.td}>
+                          <span style={styles.userName}>{log.admin.username}</span>
+                        </td>
+                        <td style={styles.td}>
+                          <span style={{
+                            backgroundColor: '#e0e7ff',
+                            color: '#3730a3',
+                            padding: '0.25rem 0.75rem',
+                            borderRadius: '20px',
+                            fontSize: '0.8rem',
+                            fontWeight: '500',
+                          }}>
+                            {getActionTypeText(log.actionType)}
+                          </span>
+                        </td>
+                        <td style={styles.td}>
+                          {log.course ? (
+                            <span>
+                              {log.course.title}
+                              {!log.course.isActive && (
+                                <span style={{ color: '#991b1b', fontSize: '0.8rem', marginLeft: '0.5rem' }}>
+                                  (已关闭)
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>-</span>
+                          )}
+                        </td>
+                        <td style={styles.td}>{formatDate(log.createdAt)}</td>
+                        <td style={styles.td}>
+                          <span style={{ color: '#475569', fontSize: '0.9rem' }}>
+                            {log.summary}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {operationLogs.length === 0 && (
+                  <div style={styles.empty}>暂无操作日志</div>
+                )}
+
+                {logPagination.totalPages > 1 && (
+                  <div style={styles.pagination}>
+                    <button
+                      onClick={() => setLogFilter({ ...logFilter, page: logFilter.page - 1 })}
+                      disabled={logFilter.page <= 1}
+                      style={styles.pageBtn}
+                    >
+                      上一页
+                    </button>
+                    <span style={styles.pageInfo}>
+                      第 {logFilter.page} 页 / 共 {logPagination.totalPages} 页
+                      （{logPagination.total} 条记录）
+                    </span>
+                    <button
+                      onClick={() => setLogFilter({ ...logFilter, page: logFilter.page + 1 })}
+                      disabled={logFilter.page >= logPagination.totalPages}
                       style={styles.pageBtn}
                     >
                       下一页

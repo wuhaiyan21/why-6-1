@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { createNotification } = require('./notifications');
+const { createOperationLog } = require('../utils/operationLog');
 const enrollmentRoutes = require('./enrollments');
 const processWaitlist = enrollmentRoutes.processWaitlist;
 
@@ -397,6 +398,7 @@ router.get('/waitlists/export', authenticateToken, requireAdmin, async (req, res
 
 router.post('/enrollments/:enrollmentId/refund/approve', authenticateToken, requireAdmin, async (req, res) => {
   const enrollmentId = parseInt(req.params.enrollmentId, 10);
+  const adminId = req.user.id;
 
   try {
     const enrollmentResult = await db.query(
@@ -437,6 +439,14 @@ router.post('/enrollments/:enrollmentId/refund/approve', authenticateToken, requ
 
     await db.query('COMMIT');
 
+    await createOperationLog(
+      adminId,
+      'refund_approved',
+      enrollment.course_id,
+      enrollmentId,
+      `通过退课申请：${enrollment.title}`
+    );
+
     const promotedUsers = await processWaitlist(enrollment.course_id);
 
     await createNotification(
@@ -458,8 +468,88 @@ router.post('/enrollments/:enrollmentId/refund/approve', authenticateToken, requ
   }
 });
 
+router.get('/operation-logs', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { courseId, page = 1, limit = 50 } = req.query;
+
+    let whereConditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (courseId) {
+      whereConditions.push(`ol.course_id = $${paramIndex}`);
+      params.push(parseInt(courseId, 10));
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.length > 0
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+
+    const countResult = await db.query(
+      `SELECT COUNT(*) as count FROM operation_logs ol ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+    params.push(parseInt(limit, 10));
+    params.push(offset);
+
+    const result = await db.query(
+      `SELECT 
+        ol.id,
+        ol.action_type,
+        ol.target_id,
+        ol.summary,
+        ol.created_at,
+        u.id as admin_id,
+        u.username as admin_username,
+        c.id as course_id,
+        c.title as course_title,
+        c.is_active as course_is_active
+      FROM operation_logs ol
+      JOIN users u ON ol.admin_id = u.id
+      LEFT JOIN courses c ON ol.course_id = c.id
+      ${whereClause}
+      ORDER BY ol.created_at DESC
+      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      params
+    );
+
+    const logs = result.rows.map(row => ({
+      id: row.id,
+      actionType: row.action_type,
+      targetId: row.target_id,
+      summary: row.summary,
+      createdAt: row.created_at,
+      admin: {
+        id: row.admin_id,
+        username: row.admin_username
+      },
+      course: row.course_id ? {
+        id: row.course_id,
+        title: row.course_title,
+        isActive: row.course_is_active
+      } : null
+    }));
+
+    res.json({
+      logs,
+      total,
+      page: parseInt(page, 10),
+      limit: parseInt(limit, 10),
+      totalPages: Math.ceil(total / parseInt(limit, 10))
+    });
+  } catch (error) {
+    console.error('Get operation logs error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 router.post('/enrollments/:enrollmentId/refund/reject', authenticateToken, requireAdmin, async (req, res) => {
   const enrollmentId = parseInt(req.params.enrollmentId, 10);
+  const adminId = req.user.id;
   const { reason } = req.body;
 
   try {
@@ -487,6 +577,14 @@ router.post('/enrollments/:enrollmentId/refund/reject', authenticateToken, requi
            refund_reason = COALESCE($1, refund_reason)
        WHERE id = $2`,
       [reason, enrollmentId]
+    );
+
+    await createOperationLog(
+      adminId,
+      'refund_rejected',
+      enrollment.course_id,
+      enrollmentId,
+      `驳回退课申请：${enrollment.title}${reason ? `，原因：${reason}` : ''}`
     );
 
     await createNotification(

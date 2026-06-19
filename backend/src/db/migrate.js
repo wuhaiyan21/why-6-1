@@ -49,6 +49,8 @@ async function migrate() {
         reserved_until TIMESTAMP,
         paid_at TIMESTAMP,
         completed BOOLEAN DEFAULT false,
+        attended BOOLEAN DEFAULT false,
+        attended_at TIMESTAMP,
         refund_status VARCHAR(20) DEFAULT NULL,
         refund_requested_at TIMESTAMP,
         refund_reason TEXT,
@@ -82,6 +84,12 @@ async function migrate() {
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'extended_at') THEN
           ALTER TABLE enrollments ADD COLUMN extended_at TIMESTAMP;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'attended') THEN
+          ALTER TABLE enrollments ADD COLUMN attended BOOLEAN DEFAULT false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'enrollments' AND column_name = 'attended_at') THEN
+          ALTER TABLE enrollments ADD COLUMN attended_at TIMESTAMP;
         END IF;
       END $$;
     `);
@@ -136,6 +144,24 @@ async function migrate() {
 
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_courses_title ON courses(title)
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS operation_logs (
+        id SERIAL PRIMARY KEY,
+        admin_id INTEGER NOT NULL REFERENCES users(id),
+        action_type VARCHAR(50) NOT NULL,
+        course_id INTEGER REFERENCES courses(id) ON DELETE SET NULL,
+        target_id INTEGER,
+        summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_operation_logs_course_id ON operation_logs(course_id);
+      CREATE INDEX IF NOT EXISTS idx_operation_logs_action_type ON operation_logs(action_type);
+      CREATE INDEX IF NOT EXISTS idx_operation_logs_created_at ON operation_logs(created_at);
     `);
 
     await client.query('COMMIT');

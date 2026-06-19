@@ -30,7 +30,8 @@ async function checkPrerequisites(userId, courseId) {
 
   const completedResult = await db.query(
     `SELECT course_id FROM enrollments 
-     WHERE user_id = $1 AND course_id = ANY($2::int[]) AND status = 'paid'`,
+     WHERE user_id = $1 AND course_id = ANY($2::int[]) 
+     AND status = 'paid' AND attended = true`,
     [userId, prereqIds]
   );
 
@@ -46,7 +47,11 @@ async function checkPrerequisites(userId, courseId) {
     [missingIds]
   );
 
-  return { met: false, missing: missingCoursesResult.rows };
+  const missingWithStatus = missingCoursesResult.rows.map(course => {
+    return { ...course, reason: 'not_attended' };
+  });
+
+  return { met: false, missing: missingWithStatus };
 }
 
 async function getWaitlistPosition(courseId, userId) {
@@ -340,6 +345,19 @@ router.post('/courses/:courseId/enroll', authenticateToken, async (req, res) => 
         });
       }
 
+      const pendingCountResult = await db.query(
+        `SELECT COUNT(*) as count FROM enrollments 
+         WHERE user_id = $1 AND status = 'pending'`,
+        [userId]
+      );
+      const pendingCount = parseInt(pendingCountResult.rows[0].count, 10);
+
+      if (pendingCount >= 3) {
+        return res.status(400).json({
+          error: '您已有3门待支付课程，请先处理现有待支付订单后再报名新课程。'
+        });
+      }
+
       const reservedUntil = new Date(Date.now() + RESERVATION_DURATION * 1000);
 
       const enrollmentResult = await db.query(
@@ -607,6 +625,8 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
         e.reserved_until,
         e.paid_at,
         e.completed,
+        e.attended,
+        e.attended_at,
         e.created_at,
         e.refund_status,
         e.refund_requested_at,
@@ -651,6 +671,8 @@ router.get('/my-enrollments', authenticateToken, async (req, res) => {
       reservedUntil: row.reserved_until,
       paidAt: row.paid_at,
       completed: row.completed,
+      attended: row.attended,
+      attendedAt: row.attended_at,
       createdAt: row.created_at,
       refundStatus: row.refund_status,
       refundRequestedAt: row.refund_requested_at,
@@ -758,6 +780,51 @@ router.get('/courses/:courseId/waitlist/count', async (req, res) => {
     });
   } catch (error) {
     console.error('Get waitlist count error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.post('/enrollments/:enrollmentId/attend', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  const enrollmentId = parseInt(req.params.enrollmentId, 10);
+
+  try {
+    const enrollmentResult = await db.query(
+      `SELECT e.*, c.start_date, c.title 
+       FROM enrollments e 
+       JOIN courses c ON e.course_id = c.id 
+       WHERE e.id = $1 AND e.user_id = $2`,
+      [enrollmentId, userId]
+    );
+
+    if (enrollmentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Enrollment not found' });
+    }
+
+    const enrollment = enrollmentResult.rows[0];
+
+    if (enrollment.status !== 'paid') {
+      return res.status(400).json({ error: 'Only paid enrollments can be marked as attended' });
+    }
+
+    if (enrollment.attended) {
+      return res.status(400).json({ error: 'Already marked as attended' });
+    }
+
+    if (new Date(enrollment.start_date) > new Date()) {
+      return res.status(400).json({ error: 'Cannot mark attendance before course starts' });
+    }
+
+    await db.query(
+      `UPDATE enrollments 
+       SET attended = true, attended_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [enrollmentId]
+    );
+
+    res.json({ message: 'Attendance confirmed successfully' });
+  } catch (error) {
+    console.error('Confirm attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

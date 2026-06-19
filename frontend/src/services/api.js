@@ -43,7 +43,10 @@ export const authAPI = {
 };
 
 export const courseAPI = {
-  getCourses: () => request('/courses'),
+  getCourses: (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return request(`/courses${queryString ? `?${queryString}` : ''}`);
+  },
 
   getCoursesAdmin: () => request('/courses?includeInactive=true'),
 
@@ -117,6 +120,11 @@ export const enrollmentAPI = {
 
   extendPayment: (enrollmentId) =>
     request(`/enrollments/${enrollmentId}/extend`, {
+      method: 'POST',
+    }),
+
+  confirmAttendance: (enrollmentId) =>
+    request(`/enrollments/${enrollmentId}/attend`, {
       method: 'POST',
     }),
 
@@ -199,4 +207,9 @@ export const adminAPI = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  getOperationLogs: (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return request(`/admin/operation-logs${queryString ? `?${queryString}` : ''}`);
+  },
 };

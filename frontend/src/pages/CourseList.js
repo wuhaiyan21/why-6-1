@@ -17,21 +17,36 @@ function CourseList() {
   const [courses, setCourses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [searchInput, setSearchInput] = useState('');
 
   useEffect(() => {
     loadCourses();
-  }, []);
+  }, [searchKeyword, sortOrder]);
 
   const loadCourses = async () => {
     try {
       setLoading(true);
-      const data = await courseAPI.getCourses();
+      const params = {};
+      if (searchKeyword) params.search = searchKeyword;
+      params.sort = sortOrder;
+      const data = await courseAPI.getCourses(params);
       setCourses(data);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setSearchKeyword(searchInput);
+  };
+
+  const handleSortChange = (e) => {
+    setSortOrder(e.target.value);
   };
 
   if (loading) {
@@ -46,6 +61,33 @@ function CourseList() {
     <div style={styles.container}>
       <h1 style={styles.title}>课程列表</h1>
       <p style={styles.subtitle}>浏览并报名我们精选的在线课程</p>
+
+      <div style={styles.filterBar}>
+        <form onSubmit={handleSearch} style={styles.searchForm}>
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="搜索课程名称..."
+            style={styles.searchInput}
+          />
+          <button type="submit" style={styles.searchBtn}>
+            搜索
+          </button>
+        </form>
+
+        <div style={styles.sortWrapper}>
+          <label style={styles.sortLabel}>排序方式：</label>
+          <select
+            value={sortOrder}
+            onChange={handleSortChange}
+            style={styles.sortSelect}
+          >
+            <option value="asc">开课时间升序</option>
+            <option value="desc">开课时间降序</option>
+          </select>
+        </div>
+      </div>
       
       <div style={styles.grid}>
         {courses.map(course => (
@@ -109,6 +151,55 @@ const styles = {
   subtitle: {
     color: '#64748b',
     marginBottom: '2rem',
+  },
+  filterBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '2rem',
+    gap: '1rem',
+    flexWrap: 'wrap',
+  },
+  searchForm: {
+    display: 'flex',
+    gap: '0.5rem',
+    flex: 1,
+    maxWidth: '400px',
+  },
+  searchInput: {
+    flex: 1,
+    padding: '0.625rem 1rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    fontSize: '0.95rem',
+    outline: 'none',
+  },
+  searchBtn: {
+    backgroundColor: '#2563eb',
+    color: 'white',
+    border: 'none',
+    padding: '0.625rem 1.25rem',
+    borderRadius: '8px',
+    fontSize: '0.95rem',
+    fontWeight: '500',
+    cursor: 'pointer',
+  },
+  sortWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+  },
+  sortLabel: {
+    fontSize: '0.9rem',
+    color: '#64748b',
+  },
+  sortSelect: {
+    padding: '0.5rem 0.75rem',
+    border: '1px solid #cbd5e1',
+    borderRadius: '8px',
+    fontSize: '0.95rem',
+    outline: 'none',
+    backgroundColor: 'white',
   },
   grid: {
     display: 'grid',

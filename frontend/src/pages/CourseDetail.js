@@ -146,7 +146,7 @@ function CourseDetail() {
       }, 1500);
     } catch (err) {
       if (err.message === 'Prerequisites not met') {
-        setError('前置课程未完成，无法报名');
+        setError('缺少前置学习记录，无法报名');
         checkPrerequisites();
       } else {
         setError(err.message);

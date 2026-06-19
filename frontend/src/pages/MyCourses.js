@@ -238,6 +238,18 @@ function MyCourses() {
     }
   };
 
+  const handleConfirmAttendance = async (enrollmentId) => {
+    if (!window.confirm('确定确认到课吗？确认后将标记为已到课。')) {
+      return;
+    }
+    try {
+      await enrollmentAPI.confirmAttendance(enrollmentId);
+      loadEnrollments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const canExtend = (item) => {
     if (item.type !== 'enrollment' || item.status !== 'pending') return false;
     if (item.hasExtended) return false;
@@ -251,10 +263,11 @@ function MyCourses() {
     return remainingSeconds <= 300;
   };
 
-  const getStatusBadge = (status, type, refundStatus) => {
+  const getStatusBadge = (status, type, refundStatus, attended) => {
     const stylesMap = {
       pending: { bg: '#fef3c7', color: '#92400e', text: '待支付' },
       paid: { bg: '#dcfce7', color: '#166534', text: '已支付' },
+      attended: { bg: '#dbeafe', color: '#1d4ed8', text: '已到课' },
       cancelled: { bg: '#fee2e2', color: '#991b1b', text: '已取消' },
       waiting: { bg: '#e0e7ff', color: '#3730a3', text: '候补中' },
       refund_pending: { bg: '#fef3c7', color: '#92400e', text: '退课审核中' },
@@ -269,6 +282,8 @@ function MyCourses() {
       displayStatus = 'refund_approved';
     } else if (refundStatus === 'rejected') {
       displayStatus = 'refund_rejected';
+    } else if (attended && status === 'paid') {
+      displayStatus = 'attended';
     }
     
     const style = stylesMap[displayStatus] || stylesMap.pending;
@@ -399,7 +414,7 @@ function MyCourses() {
                   >
                     {item.course.title}
                   </Link>
-                  {getStatusBadge(item.status, item.type, item.refundStatus)}
+                  {getStatusBadge(item.status, item.type, item.refundStatus, item.attended)}
                 </div>
 
                 <div style={styles.cardBody}>
@@ -501,18 +516,36 @@ function MyCourses() {
                             </button>
                           )}
                         </>
+                      ) : item.attended ? (
+                        <span style={styles.attendedTag}>
+                          ✓ 已到课
+                        </span>
                       ) : (
                         <>
-                          <span style={styles.completedTag}>
-                            ✓ 报名成功，请等待开课
-                          </span>
-                          {new Date(item.course.startDate) > new Date() && (
-                            <button
-                              onClick={() => handleRequestRefund(item.id)}
-                              style={styles.refundBtn}
-                            >
-                              申请退课
-                            </button>
+                          {new Date(item.course.startDate) > new Date() ? (
+                            <>
+                              <span style={styles.completedTag}>
+                                ✓ 报名成功，请等待开课
+                              </span>
+                              <button
+                                onClick={() => handleRequestRefund(item.id)}
+                                style={styles.refundBtn}
+                              >
+                                申请退课
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span style={styles.completedTag}>
+                                ✓ 报名成功，可确认到课
+                              </span>
+                              <button
+                                onClick={() => handleConfirmAttendance(item.id)}
+                                style={styles.attendBtn}
+                              >
+                                确认到课
+                              </button>
+                            </>
                           )}
                         </>
                       )}
@@ -727,6 +760,21 @@ const styles = {
     color: '#16a34a',
     fontSize: '0.9rem',
     fontWeight: '500',
+  },
+  attendedTag: {
+    color: '#1d4ed8',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+  },
+  attendBtn: {
+    backgroundColor: '#2563eb',
+    color: 'white',
+    border: 'none',
+    padding: '0.5rem 1.25rem',
+    borderRadius: '6px',
+    fontSize: '0.9rem',
+    fontWeight: '500',
+    cursor: 'pointer',
   },
   empty: {
     textAlign: 'center',

@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { createCourseTimeChangeNotification } = require('./notifications');
+const { createOperationLog } = require('../utils/operationLog');
 
 const router = express.Router();
 
@@ -28,8 +29,27 @@ router.get('/', async (req, res) => {
     const user = getOptionalUser(req);
     const isAdmin = user && user.isAdmin;
     const includeInactive = isAdmin && req.query.includeInactive === 'true';
+    const { search, sort = 'asc' } = req.query;
 
-    const whereClause = includeInactive ? '' : 'WHERE c.is_active = true';
+    let whereConditions = [];
+    let params = [];
+    let paramIndex = 1;
+
+    if (!includeInactive) {
+      whereConditions.push(`c.is_active = true`);
+    }
+
+    if (search) {
+      whereConditions.push(`c.title ILIKE $${paramIndex}`);
+      params.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.length > 0
+      ? `WHERE ${whereConditions.join(' AND ')}`
+      : '';
+
+    const sortOrder = sort === 'desc' ? 'DESC' : 'ASC';
 
     const result = await db.query(`
       SELECT 
@@ -37,8 +57,8 @@ router.get('/', async (req, res) => {
         (c.capacity - c.enrolled_count) as remaining_slots
       FROM courses c
       ${whereClause}
-      ORDER BY c.start_date ASC
-    `);
+      ORDER BY c.start_date ${sortOrder}
+    `, params);
 
     const courses = result.rows.map(course => ({
       id: course.id,
@@ -145,6 +165,7 @@ router.post('/', authenticateToken, requireAdmin, async (req, res) => {
 router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const adminId = req.user.id;
     const { title, description, capacity, startDate, isActive, prerequisites } = req.body;
 
     const existingCourse = await db.query('SELECT * FROM courses WHERE id = $1', [id]);
@@ -154,6 +175,8 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
 
     const course = existingCourse.rows[0];
     const oldStartDate = course.start_date;
+    const oldCapacity = course.capacity;
+    const oldIsActive = course.is_active;
 
     if (capacity !== undefined && capacity !== null) {
       const newCapacity = parseInt(capacity, 10);
@@ -189,6 +212,31 @@ router.put('/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     const updatedCourse = result.rows[0];
+
+    if (capacity !== undefined && capacity !== null) {
+      const newCapacity = parseInt(capacity, 10);
+      if (oldCapacity !== newCapacity) {
+        await createOperationLog(
+          adminId,
+          'capacity_changed',
+          parseInt(id, 10),
+          null,
+          `调整名额：${course.title}，名额从 ${oldCapacity} 调整为 ${newCapacity}`
+        );
+      }
+    }
+
+    if (isActive !== undefined && isActive !== null) {
+      if (oldIsActive !== isActive) {
+        await createOperationLog(
+          adminId,
+          isActive ? 'enrollment_reopened' : 'enrollment_closed',
+          parseInt(id, 10),
+          null,
+          isActive ? `重新开放招生：${course.title}` : `关闭招生：${course.title}`
+        );
+      }
+    }
 
     if (startDate !== undefined && startDate !== null) {
       const newStartDate = new Date(startDate);
@@ -233,6 +281,7 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
 router.post('/:id/close', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const adminId = req.user.id;
 
     const result = await db.query(
       'UPDATE courses SET is_active = false WHERE id = $1 RETURNING *',
@@ -242,6 +291,16 @@ router.post('/:id/close', authenticateToken, requireAdmin, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Course not found' });
     }
+
+    const course = result.rows[0];
+
+    await createOperationLog(
+      adminId,
+      'enrollment_closed',
+      parseInt(id, 10),
+      null,
+      `关闭招生：${course.title}`
+    );
 
     res.json({ message: 'Course enrollment closed successfully' });
   } catch (error) {
@@ -253,6 +312,7 @@ router.post('/:id/close', authenticateToken, requireAdmin, async (req, res) => {
 router.post('/:id/reopen', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    const adminId = req.user.id;
 
     const result = await db.query(
       'UPDATE courses SET is_active = true WHERE id = $1 RETURNING *',
@@ -262,6 +322,16 @@ router.post('/:id/reopen', authenticateToken, requireAdmin, async (req, res) => 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Course not found' });
     }
+
+    const course = result.rows[0];
+
+    await createOperationLog(
+      adminId,
+      'enrollment_reopened',
+      parseInt(id, 10),
+      null,
+      `重新开放招生：${course.title}`
+    );
 
     res.json({ message: 'Course enrollment reopened successfully' });
   } catch (error) {
